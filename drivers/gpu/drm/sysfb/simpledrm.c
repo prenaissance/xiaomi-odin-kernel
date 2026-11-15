@@ -2,6 +2,7 @@
 
 #include <linux/aperture.h>
 #include <linux/clk.h>
+#include <linux/interconnect.h>
 #include <linux/minmax.h>
 #include <linux/of_address.h>
 #include <linux/of_clk.h>
@@ -243,6 +244,11 @@ struct simpledrm_device {
 	int pwr_dom_count;
 	struct device **pwr_dom_devs;
 	struct device_link **pwr_dom_links;
+#endif
+	/* interconnects */
+#if defined CONFIG_OF && IS_REACHABLE(CONFIG_INTERCONNECT)
+	unsigned int icc_count;
+	struct icc_path **icc_paths;
 #endif
 
 	/* modesetting */
@@ -564,6 +570,99 @@ static int simpledrm_device_attach_genpd(struct simpledrm_device *sdev)
 }
 #endif
 
+#if defined CONFIG_OF && IS_REACHABLE(CONFIG_INTERCONNECT)
+static void simpledrm_device_release_icc(void *res)
+{
+	struct simpledrm_device *sdev = res;
+	unsigned int i;
+
+	for (i = 0; i < sdev->icc_count; ++i) {
+		if (sdev->icc_paths[i]) {
+			icc_set_bw(sdev->icc_paths[i], 0, 0);
+			icc_put(sdev->icc_paths[i]);
+		}
+	}
+}
+
+static int simpledrm_device_init_icc(struct simpledrm_device *sdev,
+				     int width, int height,
+				     const struct drm_format_info *format)
+{
+	struct drm_device *dev = &sdev->sysfb.dev;
+	struct platform_device *pdev = to_platform_device(dev->dev);
+	struct device_node *of_node = pdev->dev.of_node;
+	struct icc_path *path;
+	u32 avg_bw, peak_bw;
+	unsigned int i;
+	int count, ret;
+
+	if (dev_get_platdata(&pdev->dev) || !of_node)
+		return 0;
+
+	count = of_count_phandle_with_args(of_node, "interconnects",
+					   "#interconnect-cells");
+	if (count <= 0)
+		return 0;
+
+	sdev->icc_count = count / 2;
+	if (!sdev->icc_count)
+		return 0;
+
+	sdev->icc_paths = drmm_kzalloc(dev,
+				       sdev->icc_count * sizeof(*sdev->icc_paths),
+				       GFP_KERNEL);
+	if (!sdev->icc_paths)
+		return -ENOMEM;
+
+	avg_bw = Bps_to_icc((u64)width * height * format->cpp[0] * 60);
+	peak_bw = avg_bw * 2;
+
+	for (i = 0; i < sdev->icc_count; ++i) {
+		path = of_icc_get_by_index(&pdev->dev, i);
+		if (IS_ERR(path)) {
+			ret = PTR_ERR(path);
+			if (ret == -EPROBE_DEFER)
+				goto err;
+			drm_err(dev, "interconnect %u not found: %d\n", i, ret);
+			continue;
+		}
+		if (!path)
+			continue;
+
+		ret = icc_set_bw(path, avg_bw, peak_bw);
+		if (ret) {
+			drm_err(dev,
+				"failed to set interconnect %u bandwidth: %d\n",
+				i, ret);
+			icc_put(path);
+			continue;
+		}
+		sdev->icc_paths[i] = path;
+	}
+
+	return devm_add_action_or_reset(&pdev->dev,
+					simpledrm_device_release_icc,
+					sdev);
+
+err:
+	while (i) {
+		--i;
+		if (sdev->icc_paths[i]) {
+			icc_set_bw(sdev->icc_paths[i], 0, 0);
+			icc_put(sdev->icc_paths[i]);
+		}
+	}
+	return ret;
+}
+#else
+static int simpledrm_device_init_icc(struct simpledrm_device *sdev,
+				     int width, int height,
+				     const struct drm_format_info *format)
+{
+	return 0;
+}
+#endif
+
 /*
  * Modesetting
  */
@@ -729,6 +828,10 @@ static struct simpledrm_device *simpledrm_device_create(struct drm_driver *drv,
 		drm_err(dev, "page-aligned framebuffer exceeds maximum\n");
 		return ERR_PTR(-EINVAL);
 	}
+
+	ret = simpledrm_device_init_icc(sdev, width, height, format);
+	if (ret)
+		return ERR_PTR(ret);
 
 	sysfb->fb_mode = drm_sysfb_mode(width, height, width_mm, height_mm);
 	sysfb->fb_format = format;
