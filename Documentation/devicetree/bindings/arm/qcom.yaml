@@ -1157,6 +1157,7 @@ properties:
               - qcom,sm8350-mtp
               - sony,pdx214-generic
               - sony,pdx215-generic
+              - xiaomi,odin
           - const: qcom,sm8350
 
       - items:
