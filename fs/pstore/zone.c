@@ -219,6 +219,8 @@ static int psz_zone_write(struct pstore_zone *zone,
 		goto dirty;
 
 	writeop = is_on_panic() ? info->panic_write : info->write;
+	if (!writeop && is_on_panic() && !in_interrupt() && !irqs_disabled())
+		writeop = info->write;
 	if (!writeop)
 		goto dirty;
 
@@ -255,7 +257,7 @@ dirty:
 	atomic_set(&zone->dirty, true);
 	/* flush dirty zones nicely */
 	if (wcnt == -EBUSY && !is_on_panic())
-		schedule_delayed_work(&psz_cleaner, msecs_to_jiffies(500));
+		schedule_delayed_work(&psz_cleaner, msecs_to_jiffies(100));
 	return -EBUSY;
 }
 
@@ -1408,6 +1410,12 @@ int register_pstore_zone(struct pstore_zone_info *info)
 	}
 	pr_cont("\n");
 
+	err = psz_recovery(cxt);
+	if (err) {
+		pr_err("recover zones failed\n");
+		goto fail_free;
+	}
+
 	err = pstore_register(&cxt->pstore);
 	if (err) {
 		pr_err("registering with pstore failed\n");
@@ -1415,9 +1423,14 @@ int register_pstore_zone(struct pstore_zone_info *info)
 	}
 	mutex_unlock(&pstore_zone_cxt.pstore_zone_info_lock);
 
+	psz_flush_all_dirty_zones(NULL);
+
 	return 0;
 
 fail_free:
+	cxt->oops_counter = 0;
+	cxt->panic_counter = 0;
+	atomic_set(&cxt->recovered, 0);
 	kfree(cxt->pstore.buf);
 	cxt->pstore.buf = NULL;
 	cxt->pstore.bufsize = 0;
