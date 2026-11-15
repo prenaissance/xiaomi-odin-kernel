@@ -6,6 +6,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/async.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/blkdev.h>
@@ -221,6 +222,8 @@ static int __register_pstore_blk(struct pstore_device_info *dev,
 		goto err_fput;
 	}
 
+	file_inode(psblk_file)->i_flags |= S_PRIVATE;
+
 	dev->zone.total_size =
 		bdev_nr_bytes(I_BDEV(psblk_file->f_mapping->host));
 
@@ -306,6 +309,9 @@ static int __init __best_effort_init(void)
 
 	ret = __register_pstore_blk(best_effort_dev,
 				    early_boot_devpath(blkdev));
+#ifndef MODULE
+	init_unlink(devname);
+#endif
 	if (ret)
 		kfree(best_effort_dev);
 	else
@@ -337,13 +343,17 @@ static int __init pstore_blk_init(void)
 {
 	int ret;
 
+	/* Ensure async SCSI/UFS block device probing finishes before lookup */
+	if (best_effort && blkdev[0])
+		async_synchronize_full();
+
 	mutex_lock(&pstore_blk_lock);
 	ret = __best_effort_init();
 	mutex_unlock(&pstore_blk_lock);
 
 	return ret;
 }
-late_initcall(pstore_blk_init);
+late_initcall_sync(pstore_blk_init);
 
 static void __exit pstore_blk_exit(void)
 {
