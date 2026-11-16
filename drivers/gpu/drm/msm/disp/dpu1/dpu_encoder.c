@@ -12,6 +12,7 @@
 #include <linux/kthread.h>
 #include <linux/seq_file.h>
 
+#include <drm/display/drm_dsc_helper.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_file.h>
@@ -1986,6 +1987,64 @@ dpu_encoder_dsc_initial_line_calc(struct drm_dsc_config *dsc,
 	return DIV_ROUND_UP(total_pixels, dsc->slice_width);
 }
 
+static u32
+dpu_encoder_dsc_initial_line_calc_1_2(struct drm_dsc_config *dsc,
+				      u32 enc_ip_width, u32 dsc_common_mode)
+{
+	int bpc = dsc->bits_per_component;
+	int bpp = drm_dsc_get_bpp_int(dsc);
+	int soft_slice_per_enc = enc_ip_width / dsc->slice_width;
+	int rtl_max_bpc = 10, rtl_output_data_width = 64;
+	int pipeline_latency = 28;
+	int max_muxword_size, max_se_size, max_ssm_delay, mux_word_size;
+	int compress_bpp_group, container_slice_width;
+	int input_ssm_out_latency, ob_data_width, obuf_latency, base_hs_latency;
+	int chunk_bits, output_rate_extra_budget_bits;
+	int multi_hs_extra_budget_bits, multi_hs_extra_latency;
+	bool multi_hs_c, multi_hs_d;
+
+	container_slice_width = dsc->native_422 ?
+				dsc->slice_width / 2 : dsc->slice_width;
+	max_muxword_size = (rtl_max_bpc >= 12) ? 64 : 48;
+	max_se_size = 4 * (rtl_max_bpc + 1);
+	max_ssm_delay = max_se_size + max_muxword_size - 1;
+	mux_word_size = (bpc >= 12) ? 64 : 48;
+	compress_bpp_group = dsc->native_422 ? (2 * bpp) : bpp;
+	input_ssm_out_latency = pipeline_latency +
+				3 * (max_ssm_delay + 2) * soft_slice_per_enc;
+
+	if (dsc->native_420 || dsc->native_422)
+		ob_data_width = (rtl_output_data_width >= 2 * max_muxword_size) ?
+				rtl_output_data_width : 2 * rtl_output_data_width;
+	else
+		ob_data_width = (rtl_output_data_width >= max_muxword_size) ?
+				rtl_output_data_width : 2 * rtl_output_data_width;
+
+	obuf_latency = DIV_ROUND_UP(9 * ob_data_width + mux_word_size,
+				    compress_bpp_group) + 1;
+	base_hs_latency = dsc->initial_xmit_delay + input_ssm_out_latency +
+			  obuf_latency;
+	chunk_bits = 8 * dsc->slice_chunk_size;
+	output_rate_extra_budget_bits =
+		((ob_data_width - compress_bpp_group) * chunk_bits) >>
+		((ob_data_width == 128) ? 7 : 6);
+
+	multi_hs_c = (dsc_common_mode & DSC_MODE_SPLIT_PANEL) &&
+		     (dsc_common_mode & DSC_MODE_MULTIPLEX);
+	multi_hs_d = (soft_slice_per_enc > 1) &&
+		     (ob_data_width > compress_bpp_group);
+	if (multi_hs_c || multi_hs_d)
+		multi_hs_extra_budget_bits = chunk_bits;
+	else
+		multi_hs_extra_budget_bits = output_rate_extra_budget_bits;
+
+	multi_hs_extra_latency = DIV_ROUND_UP(multi_hs_extra_budget_bits,
+					      compress_bpp_group);
+
+	return DIV_ROUND_UP(base_hs_latency + multi_hs_extra_latency,
+			    container_slice_width);
+}
+
 static void dpu_encoder_dsc_pipe_cfg(struct dpu_hw_ctl *ctl,
 				     struct dpu_hw_dsc *hw_dsc,
 				     struct dpu_hw_pingpong *hw_pp,
@@ -2051,7 +2110,13 @@ static void dpu_encoder_prep_dsc(struct dpu_encoder_virt *dpu_enc,
 	intf_ip_w = this_frame_slices * dsc->slice_width;
 
 	enc_ip_w = intf_ip_w / num_dsc;
-	initial_lines = dpu_encoder_dsc_initial_line_calc(dsc, enc_ip_w);
+	if (enc_master->dpu_kms->catalog->mdss_ver->core_major_ver >= 7)
+		initial_lines = dpu_encoder_dsc_initial_line_calc_1_2(dsc,
+								      enc_ip_w,
+								      dsc_common_mode);
+	else
+		initial_lines = dpu_encoder_dsc_initial_line_calc(dsc,
+								  enc_ip_w);
 
 	for (i = 0; i < num_dsc; i++)
 		dpu_encoder_dsc_pipe_cfg(ctl, hw_dsc[i], hw_pp[i],
