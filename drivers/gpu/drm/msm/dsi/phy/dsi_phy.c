@@ -694,20 +694,46 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 	if (ret < 0)
 		return dev_err_probe(dev, ret, "Unable to get iface clk\n");
 
+	ret = pm_runtime_resume_and_get(dev);
+	if (ret)
+		return ret;
+
+	ret = regulator_bulk_enable(phy->cfg->num_regulators, phy->supplies);
+	if (ret) {
+		pm_runtime_put(dev);
+		return dev_err_probe(dev, ret, "Failed to enable supplies\n");
+	}
+
 	if (phy->cfg->ops.pll_init) {
 		ret = phy->cfg->ops.pll_init(phy);
-		if (ret)
-			return dev_err_probe(dev, ret,
-					     "PLL init failed; need separate clk driver\n");
+		if (ret) {
+			dev_err_probe(dev, ret,
+				      "PLL init failed; need separate clk driver\n");
+			goto err_pll_init;
+		}
 	}
 
 	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
-				     phy->provided_clocks);
-	if (ret)
-		return dev_err_probe(dev, ret,
-				     "Failed to register clk provider\n");
+					  phy->provided_clocks);
+	if (ret) {
+		dev_err_probe(dev, ret, "Failed to register clk provider\n");
+		goto err_clk_provider;
+	}
+
+	if (!phy->state_saved && phy->cfg->ops.disable)
+		phy->cfg->ops.disable(phy);
+	regulator_bulk_disable(phy->cfg->num_regulators, phy->supplies);
+	pm_runtime_put(dev);
 
 	return 0;
+
+err_clk_provider:
+	if (!phy->state_saved && phy->cfg->ops.disable)
+		phy->cfg->ops.disable(phy);
+err_pll_init:
+	regulator_bulk_disable(phy->cfg->num_regulators, phy->supplies);
+	pm_runtime_put(dev);
+	return ret;
 }
 
 static const struct dev_pm_ops dsi_phy_pm_ops = {

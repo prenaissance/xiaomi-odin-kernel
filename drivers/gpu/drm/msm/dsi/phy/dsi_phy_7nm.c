@@ -513,6 +513,12 @@ static int dsi_pll_7nm_vco_prepare(struct clk_hw *hw)
 	rc = dsi_pll_7nm_lock_status(pll_7nm);
 	if (rc) {
 		pr_err("PLL(%d) lock failed\n", pll_7nm->phy->id);
+		writel(0, pll_7nm->phy->base + REG_DSI_7nm_PHY_CMN_PLL_CNTRL);
+		if (pll_7nm->slave)
+			dsi_pll_disable_pll_bias(pll_7nm->slave);
+		dsi_pll_disable_pll_bias(pll_7nm);
+		/* Ensure PLL reset and bias power-down writes complete */
+		wmb();
 		goto error;
 	}
 
@@ -886,14 +892,35 @@ static int dsi_pll_7nm_init(struct msm_dsi_phy *phy)
 
 	phy->vco_hw = &pll_7nm->clk_hw;
 
-	/* TODO: Remove this when we have proper display handover support */
-	msm_dsi_phy_pll_save_state(phy);
 	/*
-	 * Store also proper vco_current_rate, because its value will be used in
-	 * dsi_7nm_pll_restore_state().
+	 * If MDSS_CORE_BCR reset the PHY and PLL registers before probe,
+	 * vco_recalc_rate() returns 0: do not mark reset-zeroed state as saved,
+	 * and program a minimal LDO + min_pll_rate configuration so orphan
+	 * CLK_OPS_PARENT_ENABLE clocks can lock cleanly during provider init.
 	 */
-	if (!dsi_pll_7nm_vco_recalc_rate(&pll_7nm->clk_hw, VCO_REF_CLK_RATE))
-		pll_7nm->vco_current_rate = pll_7nm->phy->cfg->min_pll_rate;
+	if (dsi_pll_7nm_vco_recalc_rate(&pll_7nm->clk_hw, VCO_REF_CLK_RATE)) {
+		msm_dsi_phy_pll_save_state(phy);
+	} else {
+		if ((phy->cfg->quirks & DSI_PHY_7NM_QUIRK_V4_3) ||
+		    (phy->cfg->quirks & DSI_PHY_7NM_QUIRK_V5_2) ||
+		    (phy->cfg->quirks & DSI_PHY_7NM_QUIRK_V7_2)) {
+			writel(0x1, phy->base +
+			       REG_DSI_7nm_PHY_CMN_GLBL_DIGTOP_SPARE10);
+			udelay(500);
+		}
+		writel(DSI_7nm_PHY_CMN_CTRL_0_DIGTOP_PWRDN_B |
+		       DSI_7nm_PHY_CMN_CTRL_0_PLL_SHUTDOWNB,
+		       phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
+		writel(0x53, phy->base + REG_DSI_7nm_PHY_CMN_VREG_CTRL_0);
+		writel(0x5c, phy->base + REG_DSI_7nm_PHY_CMN_VREG_CTRL_1);
+		writel(0x7f, phy->base + REG_DSI_7nm_PHY_CMN_CTRL_0);
+		dsi_pll_cmn_clk_cfg0_write(pll_7nm,
+			DSI_7nm_PHY_CMN_CLK_CFG0_DIV_CTRL_3_0(1) |
+			DSI_7nm_PHY_CMN_CLK_CFG0_DIV_CTRL_7_4(1));
+		dsi_pll_7nm_vco_set_rate(&pll_7nm->clk_hw,
+					 pll_7nm->phy->cfg->min_pll_rate,
+					 VCO_REF_CLK_RATE);
+	}
 
 	return 0;
 }
