@@ -5,6 +5,7 @@
  */
 
 #include <linux/fb.h>
+#include <linux/mm.h>
 
 #include <drm/clients/drm_fbdev_helper.h>
 #include <drm/drm_drv.h>
@@ -12,7 +13,6 @@
 #include <drm/drm_file.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
-#include <drm/drm_prime.h>
 
 #include "msm_drv.h"
 #include "msm_gem.h"
@@ -30,12 +30,35 @@ FB_GEN_DEFAULT_DEFERRED_SYSMEM_OPS(msm_fbdev,
 				   drm_fb_helper_damage_range,
 				   drm_fb_helper_damage_area)
 
+static struct page *msm_fbdev_get_page(struct fb_info *info, unsigned long offset)
+{
+	struct drm_fb_helper *helper = info->par;
+	struct drm_gem_object *bo = msm_framebuffer_bo(helper->fb, 0);
+	struct msm_gem_object *msm_obj = to_msm_bo(bo);
+	unsigned int i = offset >> PAGE_SHIFT;
+	struct page *page;
+
+	if (fb_WARN_ON_ONCE(info, offset >= bo->size || !msm_obj->pages))
+		return NULL;
+
+	page = msm_obj->pages[i];
+	if (page)
+		get_page(page);
+	fb_WARN_ON_ONCE(info, !page);
+
+	return page;
+}
+
 static int msm_fbdev_mmap(struct fb_info *info, struct vm_area_struct *vma)
 {
 	struct drm_fb_helper *helper = (struct drm_fb_helper *)info->par;
 	struct drm_gem_object *bo = msm_framebuffer_bo(helper->fb, 0);
+	struct msm_gem_object *msm_obj = to_msm_bo(bo);
 
-	return drm_gem_prime_mmap(bo, vma);
+	if (msm_obj->flags & MSM_BO_WC)
+		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+
+	return fb_deferred_io_mmap(info, vma);
 }
 
 static void msm_fbdev_fb_destroy(struct fb_info *info)
@@ -45,6 +68,7 @@ static void msm_fbdev_fb_destroy(struct fb_info *info)
 
 	DBG();
 
+	fb_deferred_io_cleanup(info);
 	drm_fb_helper_fini(helper);
 
 	msm_gem_put_vaddr(bo);
@@ -168,6 +192,16 @@ int msm_fbdev_driver_fbdev_probe(struct drm_fb_helper *helper,
 	fbi->fix.smem_start = paddr;
 	fbi->fix.smem_len = bo->size;
 
+	/* deferred I/O */
+	helper->fbdefio.delay = HZ / 20;
+	helper->fbdefio.get_page = msm_fbdev_get_page;
+	helper->fbdefio.deferred_io = drm_fb_helper_deferred_io;
+
+	fbi->fbdefio = &helper->fbdefio;
+	ret = fb_deferred_io_init(fbi);
+	if (ret)
+		goto err_msm_gem_put_vaddr;
+
 	DBG("par=%p, %dx%d", fbi->par, fbi->var.xres, fbi->var.yres);
 	DBG("allocated %dx%d fb", buffer->fb->width, buffer->fb->height);
 
@@ -179,7 +213,12 @@ int msm_fbdev_driver_fbdev_probe(struct drm_fb_helper *helper,
 
 	return 0;
 
+err_msm_gem_put_vaddr:
+	fbi->fbdefio = NULL;
+	msm_gem_put_vaddr(bo);
 err_msm_gem_unpin:
+	helper->fb = NULL;
+	helper->buffer = NULL;
 	msm_gem_unpin_iova(bo, priv->kms->vm);
 	msm_gem_vma_put(bo);
 err_drm_client_buffer_delete:
