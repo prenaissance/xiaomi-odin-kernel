@@ -43,6 +43,10 @@
 	qcom,msm-id = <0x19f 0x20001 0x1c8 0x20001 0x1f5 0x20001>;
 	qcom,board-id = <0 0>;
 
+	aliases {
+		serial0 = &uart18;
+	};
+
 	disp_vddi_vreg: disp-vddi-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "display_prim_vddi";
@@ -734,6 +738,10 @@
 	status = "okay";
 };
 
+&qupv3_id_2 {
+	status = "okay";
+};
+
 &rng {
 	status = "disabled";
 };
@@ -842,6 +850,36 @@
 		bias-disable;
 	};
 
+	qup_uart18_bt: qup-uart18-bt-state {
+		cts-pins {
+			pins = "gpio68";
+			function = "qup18";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		rts-pins {
+			pins = "gpio69";
+			function = "qup18";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		tx-pins {
+			pins = "gpio70";
+			function = "qup18";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+
+		rx-pins {
+			pins = "gpio71";
+			function = "qup18";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
 	sde_dsi_active: sde-dsi-active-state {
 		pins = "gpio24";
 		function = "gpio";
@@ -883,6 +921,27 @@
 		drive-strength = <16>;
 		output-low;
 		bias-pull-down;
+	};
+};
+
+&uart18 {
+	pinctrl-0 = <&qup_uart18_bt>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,wcn6855-bt";
+
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
+		vddaon-supply = <&vreg_pmu_aon_0p8>;
+		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+		vddwlmx-supply = <&vreg_pmu_wlmx_0p8>;
+		vddbtcmx-supply = <&vreg_pmu_btcmx_0p8>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
+
+		max-speed = <3000000>;
 	};
 };
 
