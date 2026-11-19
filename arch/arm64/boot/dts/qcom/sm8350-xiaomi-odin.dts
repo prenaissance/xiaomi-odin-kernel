@@ -720,6 +720,11 @@
 	/delete-property/ sram;
 };
 
+&slpi {
+	firmware-name = "qcom/sm8350/xiaomi/odin/slpi.mbn";
+	status = "okay";
+};
+
 &soc {
 	/*
 	 * 0x14680000..0x146befff is TZ/HYP XPU-protected OCIMEM on Odin;
