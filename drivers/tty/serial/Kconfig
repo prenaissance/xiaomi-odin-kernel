@@ -97,6 +97,20 @@ config SERIAL_EARLYCON_RISCV_SBI
 	  with "earlycon=sbi" on the kernel command line. The console is
 	  enabled when early_param is processed.
 
+config SERIAL_EARLYCON_SIMPLEFB
+	bool "Early console on pre-initialized linear framebuffer"
+	depends on (ARM64 || X86 || RISCV) && MMU
+	select FONT_SUPPORT
+	select SERIAL_CORE
+	select SERIAL_CORE_CONSOLE
+	select SERIAL_EARLYCON
+	help
+	  Support for early debug console drawing text directly into a
+	  bootloader-initialized 32-bpp linear framebuffer (such as
+	  simple-framebuffer / cont_splash_mem). Enabled with
+	  "earlycon=simplefb,0x<phys>,<width>x<height>" on the kernel
+	  command line.
+
 config SERIAL_SB1250_DUART
 	tristate "BCM1xxx on-chip DUART serial support"
 	depends on SIBYTE_SB1xxx_SOC=y
