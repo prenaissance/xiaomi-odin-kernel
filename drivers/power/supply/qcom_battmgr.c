@@ -6,9 +6,11 @@
  */
 #include <linux/auxiliary_bus.h>
 #include <linux/devm-helpers.h>
+#include <linux/limits.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/nvmem-consumer.h>
+#include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/power_supply.h>
 #include <linux/property.h>
@@ -325,6 +327,7 @@ struct qcom_battmgr {
 	struct completion ack;
 
 	bool service_up;
+	bool xiaomi_bat_props;
 
 	struct qcom_battmgr_info info;
 	struct qcom_battmgr_status status;
@@ -462,6 +465,8 @@ static int qcom_battmgr_bat_sm8350_update(struct qcom_battmgr *battmgr,
 		return -EINVAL;
 
 	prop = sm8350_bat_prop_map[psp];
+	if (battmgr->xiaomi_bat_props && prop >= BATT_TEMP)
+		prop++;
 
 	mutex_lock(&battmgr->lock);
 	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET, prop, 0);
@@ -1412,6 +1417,12 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 	switch (opcode) {
 	case BATTMGR_BAT_PROPERTY_GET:
 		property = le32_to_cpu(resp->intval.property);
+		if (battmgr->xiaomi_bat_props) {
+			if (property > BATT_TEMP)
+				property--;
+			else if (property == BATT_TEMP)
+				property = ~0U;
+		}
 		if (property == BATT_MODEL_NAME) {
 			if (payload_len != sizeof(resp->strval)) {
 				dev_warn(battmgr->dev,
@@ -1463,7 +1474,9 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 			battmgr->info.voltage_max = le32_to_cpu(resp->intval.value);
 			break;
 		case BATT_CURR_NOW:
-			battmgr->status.current_now = le32_to_cpu(resp->intval.value);
+			val = le32_to_cpu(resp->intval.value);
+			battmgr->status.current_now = battmgr->xiaomi_bat_props ?
+						      -(s32)val : (s32)val;
 			break;
 		case BATT_TEMP:
 			val = le32_to_cpu(resp->intval.value);
@@ -1488,10 +1501,26 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 			strscpy(battmgr->info.model_number, resp->strval.model, BATTMGR_STRING_LEN);
 			break;
 		case BATT_TTF_AVG:
-			battmgr->status.charge_time = le32_to_cpu(resp->intval.value);
+			val = le32_to_cpu(resp->intval.value);
+			if (battmgr->xiaomi_bat_props) {
+				if (val == U16_MAX)
+					battmgr->error = -ENODATA;
+				else
+					battmgr->status.charge_time = val * 60;
+			} else {
+				battmgr->status.charge_time = val;
+			}
 			break;
 		case BATT_TTE_AVG:
-			battmgr->status.discharge_time = le32_to_cpu(resp->intval.value);
+			val = le32_to_cpu(resp->intval.value);
+			if (battmgr->xiaomi_bat_props) {
+				if (val == U16_MAX)
+					battmgr->error = -ENODATA;
+				else
+					battmgr->status.discharge_time = val * 60;
+			} else {
+				battmgr->status.discharge_time = val;
+			}
 			break;
 		case BATT_RESISTANCE:
 			battmgr->status.resistance = le32_to_cpu(resp->intval.value);
@@ -1721,6 +1750,7 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
 					     "failed to register wireless charing power supply\n");
 	} else {
 		battmgr->unit = QCOM_BATTMGR_UNIT_mAh;
+		battmgr->xiaomi_bat_props = of_machine_is_compatible("xiaomi,odin");
 
 		if (battmgr->variant == QCOM_BATTMGR_SM8550)
 			psy_desc = &sm8550_bat_psy_desc;
