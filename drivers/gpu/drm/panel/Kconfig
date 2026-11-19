@@ -1458,6 +1458,21 @@ config DRM_PANEL_WIDECHIPS_WS2401
 	  480x800 display controller used in panels such as Samsung LMS380KF01.
 	  This display is used in the Samsung Galaxy Ace 2 GT-I8160 (Codina).
 
+config DRM_PANEL_XIAOMI_ODIN_CSOT
+	tristate "Xiaomi MIX 4 CSOT NT37701 AMOLED DSI panel"
+	depends on GPIOLIB && OF && REGULATOR
+	depends on DRM_MIPI_DSI
+	depends on BACKLIGHT_CLASS_DEVICE
+	select DRM_DISPLAY_DSC_HELPER
+	select DRM_DISPLAY_HELPER
+	help
+	  Say Y or M here if you want to enable support for the CSOT K8
+	  (42-02-0a) 1080x2400 120Hz under-display-camera AMOLED DSC 1.1 panel
+	  with Novatek NT37701 DDIC found in the Xiaomi MIX 4 smartphone.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called panel-xiaomi-odin-csot.
+
 config DRM_PANEL_XINPENG_XPP055C272
 	tristate "Xinpeng XPP055C272 panel driver"
 	depends on OF
