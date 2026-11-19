@@ -610,6 +610,11 @@ static void ath11k_pci_aspm_disable(struct ath11k_pci *ab_pci)
 {
 	struct ath11k_base *ab = ab_pci->ab;
 
+	if (ab->hw_rev == ATH11K_HW_WCN6855_HW11) {
+		pci_disable_link_state(ab_pci->pdev, PCIE_LINK_STATE_ASPM_ALL);
+		return;
+	}
+
 	pcie_capability_read_word(ab_pci->pdev, PCI_EXP_LNKCTL,
 				  &ab_pci->link_ctl);
 
@@ -1035,6 +1040,18 @@ static int ath11k_pci_probe(struct pci_dev *pdev,
 		ath11k_pci_read_hw_version(ab, &soc_hw_version_major,
 					   &soc_hw_version_minor);
 		switch (soc_hw_version_major) {
+		case 1:
+			switch (soc_hw_version_minor) {
+			case 0x00:
+			case 0x01:
+			case 0x10:
+			case 0x11:
+				ab->hw_rev = ATH11K_HW_WCN6855_HW11;
+				break;
+			default:
+				goto unsupported_wcn6855_soc;
+			}
+			break;
 		case 2:
 			switch (soc_hw_version_minor) {
 			case 0x00:
@@ -1330,5 +1347,6 @@ MODULE_LICENSE("Dual BSD/GPL");
 /* firmware files */
 MODULE_FIRMWARE(ATH11K_FW_DIR "/QCA6390/hw2.0/*");
 MODULE_FIRMWARE(ATH11K_FW_DIR "/QCN9074/hw1.0/*");
+MODULE_FIRMWARE(ATH11K_FW_DIR "/WCN6855/hw1.1/*");
 MODULE_FIRMWARE(ATH11K_FW_DIR "/WCN6855/hw2.0/*");
 MODULE_FIRMWARE(ATH11K_FW_DIR "/WCN6855/hw2.1/*");

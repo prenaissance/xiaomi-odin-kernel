@@ -59,7 +59,7 @@ static void ath11k_init_wmi_config_qca6390(struct ath11k_base *ab,
 					   struct target_resource_config *config)
 {
 	config->num_vdevs = ab->hw_params.num_vdevs;
-	config->num_peers = 16;
+	config->num_peers = ab->hw_rev == ATH11K_HW_WCN6855_HW11 ? 14 : 16;
 	config->num_tids = 32;
 
 	config->num_offload_peers = 3;
@@ -86,7 +86,10 @@ static void ath11k_init_wmi_config_qca6390(struct ath11k_base *ab,
 	config->rx_skip_defrag_timeout_dup_detection_check = 0;
 	config->vow_config = TARGET_VOW_CONFIG;
 	config->gtk_offload_max_vdev = 2;
-	config->num_msdu_desc = 0x400;
+	if (ab->hw_rev == ATH11K_HW_WCN6855_HW11 && ab->target_caps.num_msdu_desc)
+		config->num_msdu_desc = ab->target_caps.num_msdu_desc;
+	else
+		config->num_msdu_desc = 0x400;
 	config->beacon_tx_offload_max_vdev = 2;
 	config->rx_batchmode = TARGET_RX_BATCHMODE;
 
@@ -97,9 +100,11 @@ static void ath11k_init_wmi_config_qca6390(struct ath11k_base *ab,
 	config->num_tdls_conn_table_entries = 8;
 	config->beacon_tx_offload_max_vdev = 0x2;
 	config->num_multicast_filter_entries = 0x20;
-	config->num_wow_filters = 0x16;
+	config->num_wow_filters = ab->hw_rev == ATH11K_HW_WCN6855_HW11 ? 0 : 0x16;
 	config->num_keep_alive_pattern = 0;
 	config->flag1 |= WMI_RSRC_CFG_FLAG1_BSS_CHANNEL_INFO_64;
+	if (ab->hw_rev == ATH11K_HW_WCN6855_HW11)
+		config->flag1 |= WMI_RSRC_CFG_FLAG1_IPA_DISABLE;
 }
 
 static void ath11k_hw_ipq8074_reo_setup(struct ath11k_base *ab)
