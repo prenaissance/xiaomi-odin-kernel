@@ -593,6 +593,10 @@
 	status = "disabled";
 };
 
+&gpi_dma0 {
+	status = "okay";
+};
+
 &gpi_dma1 {
 	status = "okay";
 };
@@ -603,6 +607,20 @@
 
 &gpu_zap_shader {
 	firmware-name = "qcom/sm8350/xiaomi/odin/a660_zap.mbn";
+};
+
+&i2c6 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	vibrator@5a {
+		compatible = "awinic,aw8697";
+		reg = <0x5a>;
+		interrupts-extended = <&tlmm 119 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&tlmm 155 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&haptic_default_state>;
+	};
 };
 
 &lpass_tlmm {
@@ -708,6 +726,10 @@
 	status = "okay";
 };
 
+&qupv3_id_0 {
+	status = "okay";
+};
+
 &qupv3_id_1 {
 	status = "okay";
 };
@@ -772,6 +794,22 @@
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-up;
+	};
+
+	haptic_default_state: haptic-default-state {
+		rst-pins {
+			pins = "gpio155";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+
+		int-pins {
+			pins = "gpio119";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
 	};
 
 	pcie0_default_state: pcie0-default-state {
