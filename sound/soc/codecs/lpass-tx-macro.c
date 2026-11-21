@@ -31,6 +31,7 @@
 #define CDC_TX_TOP_CSR_TOP_CFG0		(0x0080)
 #define CDC_TX_TOP_CSR_ANC_CFG		(0x0084)
 #define CDC_TX_TOP_CSR_SWR_CTRL		(0x0088)
+#define CDC_TX_SWR_CTRL_CLK_EN_MASK	BIT(0)
 #define CDC_TX_TOP_CSR_FREQ_MCLK	(0x0090)
 #define CDC_TX_TOP_CSR_DEBUG_BUS	(0x0094)
 #define CDC_TX_TOP_CSR_DEBUG_EN		(0x0098)
@@ -41,6 +42,7 @@
 #define CDC_TX_TOP_CSR_SWR_DMIC0_CTL	(0x00C0)
 /* Default divider for AMIC and DMIC clock: DIV2 */
 #define CDC_TX_SWR_MIC_CLK_DEFAULT	0
+#define CDC_TX_SWR_MIC_CLK_DIV1		6
 #define CDC_TX_SWR_DMIC_CLK_SEL_MASK	GENMASK(3, 1)
 #define CDC_TX_TOP_CSR_SWR_DMIC1_CTL	(0x00C4)
 #define CDC_TX_TOP_CSR_SWR_DMIC2_CTL	(0x00C8)
@@ -272,7 +274,7 @@ struct tx_macro {
 	struct tx_mute_work tx_mute_dwork[NUM_DECIMATORS];
 	unsigned long active_ch_mask[TX_MACRO_MAX_DAIS];
 	unsigned long active_ch_cnt[TX_MACRO_MAX_DAIS];
-	int active_decimator[TX_MACRO_MAX_DAIS];
+	unsigned long active_swr_mask;
 	struct regmap *regmap;
 	struct clk *mclk;
 	struct clk *npl;
@@ -769,9 +771,10 @@ static void tx_macro_update_smic_sel_v9(struct snd_soc_component *component,
 					      CDC_TXn_ADC_DMIC_SEL_MASK, 1);
 		dmic = TX_ADC_TO_DMIC(val);
 		dmic_clk_reg = CDC_TX_TOP_CSR_SWR_DMICn_CTL(dmic);
-		snd_soc_component_write_field(component, dmic_clk_reg,
-					      CDC_TX_SWR_DMIC_CLK_SEL_MASK,
-					      CDC_TX_SWR_MIC_CLK_DEFAULT);
+		if (!pm_runtime_status_suspended(component->dev))
+			snd_soc_component_write_field(component, dmic_clk_reg,
+						      CDC_TX_SWR_DMIC_CLK_SEL_MASK,
+						      CDC_TX_SWR_MIC_CLK_DEFAULT);
 	}
 }
 
@@ -790,9 +793,10 @@ static void tx_macro_update_smic_sel_v9_2(struct snd_soc_component *component,
 
 		dmic = TX_ADC_TO_DMIC(val);
 		dmic_clk_reg = CDC_TX_TOP_CSR_SWR_DMICn_CTL(dmic);
-		snd_soc_component_write_field(component, dmic_clk_reg,
-					      CDC_TX_SWR_DMIC_CLK_SEL_MASK,
-					      CDC_TX_SWR_MIC_CLK_DEFAULT);
+		if (!pm_runtime_status_suspended(component->dev))
+			snd_soc_component_write_field(component, dmic_clk_reg,
+						      CDC_TX_SWR_DMIC_CLK_SEL_MASK,
+						      CDC_TX_SWR_MIC_CLK_DEFAULT);
 	} else {
 		snd_soc_component_write_field(component, mic_sel_reg,
 					      CDC_TXn_ADC_DMIC_SEL_MASK, 0);
@@ -889,19 +893,15 @@ static int tx_macro_tx_mixer_put(struct snd_kcontrol *kcontrol,
 	struct tx_macro *tx = snd_soc_component_get_drvdata(component);
 
 	if (enable) {
-		if (tx->active_decimator[dai_id] == dec_id)
+		if (test_and_set_bit(dec_id, &tx->active_ch_mask[dai_id]))
 			return 0;
 
-		set_bit(dec_id, &tx->active_ch_mask[dai_id]);
 		tx->active_ch_cnt[dai_id]++;
-		tx->active_decimator[dai_id] = dec_id;
 	} else {
-		if (tx->active_decimator[dai_id] == -1)
+		if (!test_and_clear_bit(dec_id, &tx->active_ch_mask[dai_id]))
 			return 0;
 
 		tx->active_ch_cnt[dai_id]--;
-		clear_bit(dec_id, &tx->active_ch_mask[dai_id]);
-		tx->active_decimator[dai_id] = -1;
 	}
 	snd_soc_dapm_mixer_update_power(widget->dapm, kcontrol, enable, update);
 
@@ -926,11 +926,12 @@ static int tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 	hpf_gate_reg = CDC_TXn_TX_PATH_SEC2(decimator);
 	dec_cfg_reg = CDC_TXn_TX_PATH_CFG0(decimator);
 	tx_gain_ctl_reg = CDC_TXn_TX_VOL_CTL(decimator);
+	adc_mux_reg = CDC_TX_INP_MUX_ADC_MUXn_CFG1(decimator);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
-		adc_mux_reg = CDC_TX_INP_MUX_ADC_MUXn_CFG1(decimator);
-		if (snd_soc_component_read(component, adc_mux_reg) & SWR_MIC) {
+		if (tx->data->ver <= LPASS_VER_9_0_0 &&
+		    (snd_soc_component_read(component, adc_mux_reg) & SWR_MIC)) {
 			adc_reg = CDC_TX_INP_MUX_ADC_MUXn_CFG0(decimator);
 			adc_n = snd_soc_component_read(component, adc_reg) &
 				CDC_TX_MACRO_SWR_MIC_MUX_SEL_MASK;
@@ -1009,6 +1010,29 @@ static int tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 					0x01, 0x01);
 			tx->bcs_clk_en = true;
 		}
+		if (lpass_macro_get_codec_version() == LPASS_CODEC_VERSION_2_0 &&
+		    (snd_soc_component_read(component, adc_mux_reg) & SWR_MIC)) {
+			set_bit(decimator, &tx->active_swr_mask);
+			snd_soc_component_write_field(component,
+						      CDC_TX_TOP_CSR_SWR_CTRL,
+						      CDC_TX_SWR_CTRL_CLK_EN_MASK,
+						      0x1);
+			snd_soc_component_write_field(component,
+						      CDC_TX_TOP_CSR_SWR_AMIC0_CTL,
+						      CDC_TX_SWR_DMIC_CLK_SEL_MASK,
+						      CDC_TX_SWR_MIC_CLK_DIV1);
+			snd_soc_component_write_field(component,
+						      CDC_TX_TOP_CSR_SWR_AMIC1_CTL,
+						      CDC_TX_SWR_DMIC_CLK_SEL_MASK,
+						      CDC_TX_SWR_MIC_CLK_DIV1);
+			for (dmic = 0; dmic < 4; dmic++)
+				snd_soc_component_write_field(component,
+							      CDC_TX_TOP_CSR_SWR_DMICn_CTL(dmic),
+							      CDC_TX_SWR_DMIC_CLK_SEL_MASK,
+							      dmic == 0 ?
+							      CDC_TX_SWR_MIC_CLK_DIV1 :
+							      CDC_TX_SWR_MIC_CLK_DEFAULT);
+		}
 		break;
 	case SND_SOC_DAPM_PRE_PMD:
 		hpf_cut_off_freq =
@@ -1047,6 +1071,12 @@ static int tx_macro_enable_dec(struct snd_soc_dapm_widget *w,
 			}
 		}
 		cancel_delayed_work_sync(&tx->tx_mute_dwork[decimator].dwork);
+		if (test_and_clear_bit(decimator, &tx->active_swr_mask) &&
+		    !tx->active_swr_mask)
+			snd_soc_component_write_field(component,
+						      CDC_TX_TOP_CSR_SWR_CTRL,
+						      CDC_TX_SWR_CTRL_CLK_EN_MASK,
+						      0x0);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
 		snd_soc_component_write_field(component, tx_vol_ctl_reg,
@@ -1194,20 +1224,16 @@ static int tx_macro_digital_mute(struct snd_soc_dai *dai, int mute, int stream)
 	struct tx_macro *tx = snd_soc_component_get_drvdata(component);
 	u8 decimator;
 
-	/* active decimator not set yet */
-	if (tx->active_decimator[dai->id] == -1)
-		return 0;
-
-	decimator = tx->active_decimator[dai->id];
-
-	if (mute)
-		snd_soc_component_write_field(component,
-					      CDC_TXn_TX_PATH_CTL(decimator),
-					      CDC_TXn_PGA_MUTE_MASK, 0x1);
-	else
-		snd_soc_component_update_bits(component,
-					      CDC_TXn_TX_PATH_CTL(decimator),
-					      CDC_TXn_PGA_MUTE_MASK, 0x0);
+	for_each_set_bit(decimator, &tx->active_ch_mask[dai->id], TX_MACRO_DEC_MAX) {
+		if (mute)
+			snd_soc_component_write_field(component,
+						      CDC_TXn_TX_PATH_CTL(decimator),
+						      CDC_TXn_PGA_MUTE_MASK, 0x1);
+		else if (!delayed_work_pending(&tx->tx_mute_dwork[decimator].dwork))
+			snd_soc_component_update_bits(component,
+						      CDC_TXn_TX_PATH_CTL(decimator),
+						      CDC_TXn_PGA_MUTE_MASK, 0x0);
+	}
 
 	return 0;
 }
@@ -2313,11 +2339,6 @@ static int tx_macro_probe(struct platform_device *pdev)
 	dev_set_drvdata(dev, tx);
 
 	tx->dev = dev;
-
-	/* Set active_decimator default value */
-	tx->active_decimator[TX_MACRO_AIF1_CAP] = -1;
-	tx->active_decimator[TX_MACRO_AIF2_CAP] = -1;
-	tx->active_decimator[TX_MACRO_AIF3_CAP] = -1;
 
 	/* set MCLK and NPL rates */
 	ret = clk_set_rate(tx->mclk, MCLK_FREQ);
