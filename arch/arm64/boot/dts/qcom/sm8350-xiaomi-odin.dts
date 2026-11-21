@@ -712,6 +712,11 @@
 	};
 };
 
+&cdsp {
+	firmware-name = "qcom/sm8350/xiaomi/odin/cdsp.mbn";
+	status = "okay";
+};
+
 &crypto {
 	status = "disabled";
 };
