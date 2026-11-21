@@ -118,6 +118,8 @@ enum {
 	WCD_SUPPLIES_LPM_MODE,
 };
 
+#define WCD938X_ADC_MASK		GENMASK(WCD_ADC4, WCD_ADC1)
+
 enum {
 	ADC_MODE_INVALID = 0,
 	ADC_MODE_HIFI,
@@ -1185,9 +1187,15 @@ static int wcd938x_codec_enable_adc(struct snd_soc_dapm_widget *w,
 		set_bit(w->shift, &wcd938x->status_mask);
 		break;
 	case SND_SOC_DAPM_POST_PMD:
-		snd_soc_component_write_field(component, WCD938X_DIGITAL_CDC_ANA_CLK_CTL,
-					      WCD938X_ANA_TX_CLK_EN_MASK, 0);
 		clear_bit(w->shift, &wcd938x->status_mask);
+		if (!(wcd938x->status_mask & WCD938X_ADC_MASK)) {
+			snd_soc_component_write_field(component,
+						      WCD938X_DIGITAL_CDC_ANA_CLK_CTL,
+						      WCD938X_ANA_TX_DIV2_CLK_EN_MASK, 0);
+			snd_soc_component_write_field(component,
+						      WCD938X_DIGITAL_CDC_ANA_CLK_CTL,
+						      WCD938X_ANA_TX_CLK_EN_MASK, 0);
+		}
 		break;
 	}
 
@@ -1320,9 +1328,6 @@ static int wcd938x_adc_enable_req(struct snd_soc_dapm_widget *w,
 		default:
 			break;
 		}
-		snd_soc_component_write_field(component,
-				WCD938X_DIGITAL_CDC_ANA_CLK_CTL,
-				WCD938X_ANA_TX_DIV2_CLK_EN_MASK, 0);
 		break;
 	}
 
