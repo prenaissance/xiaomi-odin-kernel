@@ -50,6 +50,35 @@
 		serial0 = &uart18;
 	};
 
+	wcd938x: audio-codec {
+		compatible = "qcom,wcd9385-codec";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wcd938x_reset_default>;
+		reset-gpios = <&tlmm 88 GPIO_ACTIVE_LOW>;
+
+		vdd-rxtx-supply = <&pm8350_s10>;
+		vdd-io-supply = <&pm8350_s10>;
+		vdd-buck-supply = <&pm8350_s10>;
+		vdd-mic-bias-supply = <&vreg_bob>;
+
+		qcom,micbias1-microvolt = <2750000>;
+		qcom,micbias2-microvolt = <2750000>;
+		qcom,micbias3-microvolt = <2750000>;
+		qcom,micbias4-microvolt = <2750000>;
+
+		qcom,hphl-jack-type-normally-closed;
+		qcom,ground-jack-type-normally-closed;
+		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000
+							  500000 500000 500000 500000>;
+		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
+		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+
+		qcom,rx-device = <&wcd_rx>;
+		qcom,tx-device = <&wcd_tx>;
+
+		#sound-dai-cells = <1>;
+	};
+
 	disp_vddi_vreg: disp-vddi-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "display_prim_vddi";
@@ -174,6 +203,18 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&tert_tdm_active &spksw_default>;
 
+		audio-routing =
+			"IN1_HPHL", "HPHL_OUT",
+			"IN2_HPHR", "HPHR_OUT",
+			"AMIC1", "MIC BIAS1",
+			"AMIC2", "MIC BIAS2",
+			"AMIC3", "MIC BIAS3",
+			"AMIC5", "MIC BIAS4",
+			"TX SWR_INPUT0", "ADC1_OUTPUT",
+			"TX SWR_INPUT1", "ADC2_OUTPUT",
+			"TX SWR_INPUT4", "ADC3_OUTPUT",
+			"TX SWR_INPUT5", "ADC4_OUTPUT";
+
 		mm1-dai-link {
 			link-name = "MultiMedia1";
 
@@ -211,6 +252,38 @@
 
 			codec {
 				sound-dai = <&cs35l41_rcv 0>, <&cs35l41_spk 0>;
+			};
+		};
+
+		wcd-playback-dai-link {
+			link-name = "WCD Playback";
+
+			cpu {
+				sound-dai = <&q6afedai RX_CODEC_DMA_RX_0>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&wcd938x 0>, <&swr1 0>, <&rxmacro 0>;
+			};
+		};
+
+		wcd-capture-dai-link {
+			link-name = "WCD Capture";
+
+			cpu {
+				sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
 			};
 		};
 	};
@@ -554,7 +627,7 @@
 
 		vreg_bob: bob {
 			regulator-name = "vreg_bob";
-			regulator-min-microvolt = <3008000>;
+			regulator-min-microvolt = <3296000>;
 			regulator-max-microvolt = <3960000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
 		};
@@ -724,8 +797,12 @@
 	};
 };
 
-&lpass_tlmm {
-	status = "disabled";
+&lpass_tx_swr_clk {
+	drive-strength = <4>;
+};
+
+&lpass_tx_swr_data {
+	drive-strength = <4>;
 };
 
 &mdss {
@@ -868,6 +945,10 @@
 	status = "disabled";
 };
 
+&rxmacro {
+	status = "okay";
+};
+
 &scm {
 	/delete-property/ sram;
 };
@@ -905,6 +986,26 @@
 		touchscreen-size-x = <10800>;
 		touchscreen-size-y = <24000>;
 		st,super-resolution;
+	};
+};
+
+&swr1 {
+	status = "okay";
+
+	wcd_rx: codec@0,4 {
+		compatible = "sdw20217010d00";
+		reg = <0 4>;
+		qcom,rx-port-mapping = <1 2 3 4 5>;
+	};
+};
+
+&swr2 {
+	status = "okay";
+
+	wcd_tx: codec@0,3 {
+		compatible = "sdw20217010d00";
+		reg = <0 3>;
+		qcom,tx-port-mapping = <1 2 3 4>;
 	};
 };
 
@@ -1100,6 +1201,13 @@
 		bias-pull-up;
 	};
 
+	wcd938x_reset_default: wcd938x-reset-default-state {
+		pins = "gpio88";
+		function = "gpio";
+		drive-strength = <16>;
+		output-high;
+	};
+
 	wlan_en_state: wlan-en-state {
 		pins = "gpio64";
 		function = "gpio";
@@ -1107,6 +1215,10 @@
 		output-low;
 		bias-pull-down;
 	};
+};
+
+&txmacro {
+	status = "okay";
 };
 
 &uart18 {
@@ -1170,6 +1282,10 @@
 
 &usb_1_qmpphy_usb_ss_in {
 	/delete-property/ remote-endpoint;
+};
+
+&vamacro {
+	status = "okay";
 };
 
 &videocc {
