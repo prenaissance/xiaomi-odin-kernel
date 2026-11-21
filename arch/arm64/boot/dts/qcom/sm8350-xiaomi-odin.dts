@@ -797,6 +797,11 @@
 	};
 };
 
+&iris {
+	firmware-name = "qcom/sm8350/xiaomi/odin/vpu20_4v.mbn";
+	status = "okay";
+};
+
 &lpass_tx_swr_clk {
 	drive-strength = <4>;
 };
@@ -1286,8 +1291,4 @@
 
 &vamacro {
 	status = "okay";
-};
-
-&videocc {
-	status = "disabled";
 };
