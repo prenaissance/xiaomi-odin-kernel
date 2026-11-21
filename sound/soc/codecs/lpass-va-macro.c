@@ -1367,6 +1367,11 @@ static int fsgen_gate_enable(struct clk_hw *hw)
 				 rpm_ret);
 		return ret;
 	}
+
+	regmap_update_bits(regmap, CDC_VA_TOP_CSR_DMIC_CFG,
+			   CDC_VA_RESET_ALL_DMICS_MASK,
+			   CDC_VA_RESET_ALL_DMICS_DISABLE);
+
 	if (va->has_swr_master)
 		regmap_update_bits(regmap, CDC_VA_CLK_RST_CTRL_SWR_CONTROL,
 				   CDC_VA_SWR_CLK_EN_MASK, CDC_VA_SWR_CLK_ENABLE);
