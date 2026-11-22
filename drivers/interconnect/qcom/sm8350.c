@@ -1131,6 +1131,8 @@ static struct qcom_icc_node qns_pcie = {
 	.name = "qns_pcie",
 	.channels = 1,
 	.buswidth = 8,
+	.num_links = 1,
+	.link_nodes = { &qnm_gemnoc_pcie },
 };
 
 static struct qcom_icc_node srvc_even_gemnoc = {
