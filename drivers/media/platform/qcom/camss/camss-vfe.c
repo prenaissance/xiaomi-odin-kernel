@@ -347,6 +347,7 @@ static u32 vfe_src_pad_code(struct vfe_line *line, u32 sink_code,
 	case CAMSS_7280:
 	case CAMSS_8x96:
 	case CAMSS_8250:
+	case CAMSS_8350:
 	case CAMSS_8280XP:
 	case CAMSS_8300:
 	case CAMSS_845:
@@ -2004,6 +2005,7 @@ static int vfe_bpl_align_rdi(struct vfe_device *vfe)
 	case CAMSS_6350:
 	case CAMSS_7280:
 	case CAMSS_8250:
+	case CAMSS_8350:
 	case CAMSS_8280XP:
 	case CAMSS_8300:
 	case CAMSS_845:
