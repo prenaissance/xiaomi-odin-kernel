@@ -584,11 +584,12 @@ void dsi_link_clk_disable_v2(struct msm_dsi_host *msm_host)
  * dsi_adjust_pclk_for_compression() - Adjust the pclk rate for compression case
  * @mode: The selected mode for the DSI output
  * @dsc: DRM DSC configuration for this DSI output
+ * @bpp: Bits per pixel of the DSI link format
  * @is_bonded_dsi: True if two DSI controllers are bonded
  *
  * Adjust the pclk rate by calculating a new hdisplay proportional to
- * the compression ratio such that:
- *     new_hdisplay = old_hdisplay * compressed_bpp / uncompressed_bpp
+ * the compressed data carried per DSI pixel clock cycle:
+ *     new_hdisplay = old_hdisplay * compressed_bpp / bpp
  *
  * Porches do not need to be adjusted:
  * - For VIDEO mode they are not compressed by DSC and are passed as is.
@@ -603,7 +604,7 @@ void dsi_link_clk_disable_v2(struct msm_dsi_host *msm_host)
 static unsigned long
 dsi_adjust_pclk_for_compression(const struct drm_display_mode *mode,
 				const struct drm_dsc_config *dsc,
-				bool is_bonded_dsi)
+				u32 bpp, bool is_bonded_dsi)
 {
 	int hdisplay, new_hdisplay, new_htotal;
 
@@ -617,8 +618,7 @@ dsi_adjust_pclk_for_compression(const struct drm_display_mode *mode,
 	if (is_bonded_dsi)
 		hdisplay /= 2;
 
-	new_hdisplay = DIV_ROUND_UP(hdisplay * drm_dsc_get_bpp_int(dsc),
-				    dsc->bits_per_component * 3);
+	new_hdisplay = DIV_ROUND_UP(hdisplay * drm_dsc_get_bpp_int(dsc), bpp);
 
 	if (is_bonded_dsi)
 		new_hdisplay *= 2;
@@ -629,14 +629,14 @@ dsi_adjust_pclk_for_compression(const struct drm_display_mode *mode,
 }
 
 static unsigned long dsi_get_pclk_rate(const struct drm_display_mode *mode,
-		const struct drm_dsc_config *dsc, bool is_bonded_dsi)
+		const struct drm_dsc_config *dsc, u32 bpp, bool is_bonded_dsi)
 {
 	unsigned long pclk_rate;
 
 	pclk_rate = mode->clock * 1000u;
 
 	if (dsc)
-		pclk_rate = dsi_adjust_pclk_for_compression(mode, dsc, is_bonded_dsi);
+		pclk_rate = dsi_adjust_pclk_for_compression(mode, dsc, bpp, is_bonded_dsi);
 
 	/*
 	 * For bonded DSI mode, the current DRM mode has the complete width of the
@@ -656,7 +656,7 @@ unsigned long dsi_byte_clk_get_rate(struct mipi_dsi_host *host, bool is_bonded_d
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 	u8 lanes = msm_host->lanes;
 	u32 bpp = mipi_dsi_pixel_format_to_bpp(msm_host->format);
-	unsigned long pclk_rate = dsi_get_pclk_rate(mode, msm_host->dsc, is_bonded_dsi);
+	unsigned long pclk_rate = dsi_get_pclk_rate(mode, msm_host->dsc, bpp, is_bonded_dsi);
 	unsigned long pclk_bpp;
 
 	if (lanes == 0) {
@@ -675,7 +675,10 @@ unsigned long dsi_byte_clk_get_rate(struct mipi_dsi_host *host, bool is_bonded_d
 
 static void dsi_calc_pclk(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 {
-	msm_host->pixel_clk_rate = dsi_get_pclk_rate(msm_host->mode, msm_host->dsc, is_bonded_dsi);
+	u32 bpp = mipi_dsi_pixel_format_to_bpp(msm_host->format);
+
+	msm_host->pixel_clk_rate = dsi_get_pclk_rate(msm_host->mode, msm_host->dsc,
+						     bpp, is_bonded_dsi);
 	msm_host->byte_clk_rate = dsi_byte_clk_get_rate(&msm_host->base, is_bonded_dsi,
 							msm_host->mode);
 
