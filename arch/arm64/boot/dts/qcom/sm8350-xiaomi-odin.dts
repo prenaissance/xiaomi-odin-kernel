@@ -1577,15 +1577,12 @@
 
 &usb_1 {
 	qcom,select-utmi-as-pipe-clk;
-	status = "okay";
-};
-
-&usb_1_dwc3 {
 	dr_mode = "otg";
 	usb-role-switch;
 	maximum-speed = "high-speed";
 	phys = <&usb_1_hsphy>;
 	phy-names = "usb2-phy";
+	status = "okay";
 };
 
 &usb_1_dwc3_hs {
