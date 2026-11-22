@@ -847,12 +847,9 @@
 };
 
 &usb_1 {
-	status = "okay";
-};
-
-&usb_1_dwc3 {
 	dr_mode = "otg";
 	usb-role-switch;
+	status = "okay";
 };
 
 &usb_1_dwc3_hs {
@@ -879,14 +876,12 @@
 };
 
 &usb_2 {
-	status = "okay";
-};
-
-&usb_2_dwc3 {
 	dr_mode = "host";
 
 	pinctrl-names = "default";
 	pinctrl-0 = <&usb_hub_enabled_state>;
+
+	status = "okay";
 };
 
 &usb_2_hsphy {
