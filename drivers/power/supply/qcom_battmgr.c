@@ -37,6 +37,7 @@ enum qcom_battmgr_variant {
 #define NOTIF_BAT_PROPERTY		0x30
 #define NOTIF_USB_PROPERTY		0x32
 #define NOTIF_WLS_PROPERTY		0x34
+#define NOTIF_XM_PROPERTY		0x50
 #define NOTIF_BAT_STATUS		0x80
 #define NOTIF_BAT_INFO			0x81
 #define NOTIF_BAT_CHARGING_STATE	0x83
@@ -99,6 +100,11 @@ enum qcom_battmgr_variant {
 #define WLS_CURR_MAX			4
 #define WLS_TYPE			5
 #define WLS_BOOST_EN			6
+
+#define BATTMGR_XM_PROPERTY_GET		0x50
+#define BATTMGR_XM_PROPERTY_SET		0x51
+#define XM_PROP_REVERSE_CHG_MODE	33
+#define XM_PROP_REVERSE_CHG_STATE	34
 
 #define BATTMGR_CHG_CTRL_LIMIT_EN	0x48
 #define CHARGE_CTRL_START_THR_MIN	50
@@ -308,6 +314,9 @@ struct qcom_battmgr_wireless {
 	unsigned int voltage_max;
 	unsigned int current_now;
 	unsigned int current_max;
+	unsigned int reverse_charge_mode;
+	unsigned int reverse_charge_state;
+	bool reverse_charge_wakelock;
 };
 
 struct qcom_battmgr {
@@ -336,6 +345,7 @@ struct qcom_battmgr {
 	struct qcom_battmgr_wireless wireless;
 
 	struct work_struct enable_work;
+	struct work_struct xm_notify_work;
 
 	/*
 	 * @lock is used to prevent concurrent power supply requests to the
@@ -1194,6 +1204,137 @@ static const struct power_supply_desc sm8350_wls_psy_desc = {
 	.get_property = qcom_battmgr_wls_get_property,
 };
 
+static void qcom_battmgr_xm_update_wakelock(struct qcom_battmgr *battmgr,
+					    bool enable)
+{
+	if (battmgr->wireless.reverse_charge_wakelock == enable)
+		return;
+
+	if (enable)
+		pm_stay_awake(battmgr->dev);
+	else
+		pm_relax(battmgr->dev);
+
+	battmgr->wireless.reverse_charge_wakelock = enable;
+}
+
+static void qcom_battmgr_xm_wakeup_cleanup(void *data)
+{
+	struct qcom_battmgr *battmgr = data;
+
+	mutex_lock(&battmgr->lock);
+	qcom_battmgr_xm_update_wakelock(battmgr, false);
+	mutex_unlock(&battmgr->lock);
+	device_init_wakeup(battmgr->dev, false);
+}
+
+static ssize_t reverse_charge_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct power_supply *psy = to_power_supply(dev);
+	struct qcom_battmgr *battmgr = power_supply_get_drvdata(psy);
+	unsigned int mode;
+	int ret;
+
+	if (!battmgr->service_up)
+		return -EAGAIN;
+
+	mutex_lock(&battmgr->lock);
+	ret = qcom_battmgr_request_property(battmgr, BATTMGR_XM_PROPERTY_GET,
+					    XM_PROP_REVERSE_CHG_MODE, 0);
+	if (!ret) {
+		mode = battmgr->wireless.reverse_charge_mode;
+		qcom_battmgr_xm_update_wakelock(battmgr, !!mode);
+	}
+	mutex_unlock(&battmgr->lock);
+
+	if (ret < 0)
+		return ret;
+
+	return sysfs_emit(buf, "%u\n", mode);
+}
+
+static ssize_t reverse_charge_store(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct power_supply *psy = to_power_supply(dev);
+	struct qcom_battmgr *battmgr = power_supply_get_drvdata(psy);
+	bool enable;
+	int ret;
+
+	if (!battmgr->service_up)
+		return -EAGAIN;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret < 0)
+		return ret;
+
+	mutex_lock(&battmgr->lock);
+	ret = qcom_battmgr_request_property(battmgr, BATTMGR_XM_PROPERTY_SET,
+					    XM_PROP_REVERSE_CHG_MODE, enable);
+	if (!ret) {
+		if (!qcom_battmgr_request_property(battmgr, BATTMGR_XM_PROPERTY_GET,
+						   XM_PROP_REVERSE_CHG_MODE, 0))
+			qcom_battmgr_xm_update_wakelock(battmgr,
+							!!battmgr->wireless.reverse_charge_mode);
+		else
+			qcom_battmgr_xm_update_wakelock(battmgr, enable);
+	}
+	mutex_unlock(&battmgr->lock);
+
+	if (ret < 0)
+		return ret;
+
+	power_supply_changed(battmgr->wls_psy);
+
+	return count;
+}
+
+static DEVICE_ATTR_RW(reverse_charge);
+
+static ssize_t reverse_charge_state_show(struct device *dev,
+					 struct device_attribute *attr,
+					 char *buf)
+{
+	struct power_supply *psy = to_power_supply(dev);
+	struct qcom_battmgr *battmgr = power_supply_get_drvdata(psy);
+	unsigned int state;
+	int ret;
+
+	if (!battmgr->service_up)
+		return -EAGAIN;
+
+	mutex_lock(&battmgr->lock);
+	ret = qcom_battmgr_request_property(battmgr, BATTMGR_XM_PROPERTY_GET,
+					    XM_PROP_REVERSE_CHG_STATE, 0);
+	if (!ret)
+		state = battmgr->wireless.reverse_charge_state;
+	mutex_unlock(&battmgr->lock);
+
+	if (ret < 0)
+		return ret;
+
+	return sysfs_emit(buf, "%u\n", state);
+}
+
+static DEVICE_ATTR_RO(reverse_charge_state);
+
+static struct attribute *qcom_battmgr_xm_wls_attrs[] = {
+	&dev_attr_reverse_charge.attr,
+	&dev_attr_reverse_charge_state.attr,
+	NULL
+};
+
+static const struct attribute_group qcom_battmgr_xm_wls_attr_group = {
+	.attrs = qcom_battmgr_xm_wls_attrs,
+};
+
+static const struct attribute_group *qcom_battmgr_xm_wls_attr_groups[] = {
+	&qcom_battmgr_xm_wls_attr_group,
+	NULL
+};
+
 static void qcom_battmgr_notification(struct qcom_battmgr *battmgr,
 				      const struct qcom_battmgr_message *msg,
 				      int len)
@@ -1222,6 +1363,10 @@ static void qcom_battmgr_notification(struct qcom_battmgr *battmgr,
 		break;
 	case NOTIF_WLS_PROPERTY:
 		power_supply_changed(battmgr->wls_psy);
+		break;
+	case NOTIF_XM_PROPERTY:
+		if (battmgr->xiaomi_bat_props)
+			schedule_work(&battmgr->xm_notify_work);
 		break;
 	default:
 		dev_err(battmgr->dev, "unknown notification: %#x\n", notification);
@@ -1615,6 +1760,43 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 			break;
 		}
 		break;
+	case BATTMGR_XM_PROPERTY_GET:
+		property = le32_to_cpu(resp->intval.property);
+		if (payload_len != sizeof(resp->intval)) {
+			dev_warn(battmgr->dev,
+				 "invalid payload length for %#x request: %zd\n",
+				 property, payload_len);
+			battmgr->error = -ENODATA;
+			goto out_complete;
+		}
+
+		battmgr->error = le32_to_cpu(resp->intval.result);
+		if (battmgr->error)
+			goto out_complete;
+
+		switch (property) {
+		case XM_PROP_REVERSE_CHG_MODE:
+			battmgr->wireless.reverse_charge_mode = le32_to_cpu(resp->intval.value);
+			break;
+		case XM_PROP_REVERSE_CHG_STATE:
+			battmgr->wireless.reverse_charge_state = le32_to_cpu(resp->intval.value);
+			break;
+		default:
+			dev_warn(battmgr->dev, "unknown xm property %#x\n", property);
+			break;
+		}
+		break;
+	case BATTMGR_XM_PROPERTY_SET:
+		if (payload_len != sizeof(resp->intval)) {
+			dev_warn(battmgr->dev,
+				 "invalid payload length for xm set request: %zd\n",
+				 payload_len);
+			battmgr->error = -ENODATA;
+			goto out_complete;
+		}
+
+		battmgr->error = le32_to_cpu(resp->intval.result);
+		break;
 	case BATTMGR_REQUEST_NOTIFICATION:
 	case BATTMGR_CHG_CTRL_LIMIT_EN:
 		battmgr->error = 0;
@@ -1626,6 +1808,25 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 
 out_complete:
 	complete(&battmgr->ack);
+}
+
+static void qcom_battmgr_xm_notify_worker(struct work_struct *work)
+{
+	struct qcom_battmgr *battmgr = container_of(work, struct qcom_battmgr, xm_notify_work);
+	int ret;
+
+	if (!battmgr->service_up)
+		return;
+
+	mutex_lock(&battmgr->lock);
+	ret = qcom_battmgr_request_property(battmgr, BATTMGR_XM_PROPERTY_GET,
+					    XM_PROP_REVERSE_CHG_MODE, 0);
+	if (!ret)
+		qcom_battmgr_xm_update_wakelock(battmgr,
+						!!battmgr->wireless.reverse_charge_mode);
+	mutex_unlock(&battmgr->lock);
+
+	power_supply_changed(battmgr->wls_psy);
 }
 
 static void qcom_battmgr_callback(const void *data, size_t len, void *priv)
@@ -1688,6 +1889,7 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
 {
 	const struct power_supply_desc *psy_desc;
 	struct power_supply_config psy_cfg_supply = {};
+	struct power_supply_config psy_cfg_wls;
 	struct power_supply_config psy_cfg = {};
 	const struct of_device_id *match;
 	struct qcom_battmgr *battmgr;
@@ -1767,7 +1969,20 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
 			return dev_err_probe(dev, PTR_ERR(battmgr->usb_psy),
 					     "failed to register USB power supply\n");
 
-		battmgr->wls_psy = devm_power_supply_register(dev, &sm8350_wls_psy_desc, &psy_cfg_supply);
+		psy_cfg_wls = psy_cfg_supply;
+		if (battmgr->xiaomi_bat_props) {
+			device_init_wakeup(dev, true);
+			ret = devm_add_action_or_reset(dev,
+						       qcom_battmgr_xm_wakeup_cleanup,
+						       battmgr);
+			if (ret)
+				return ret;
+
+			psy_cfg_wls.attr_grp = qcom_battmgr_xm_wls_attr_groups;
+		}
+
+		battmgr->wls_psy = devm_power_supply_register(dev, &sm8350_wls_psy_desc,
+							      &psy_cfg_wls);
 		if (IS_ERR(battmgr->wls_psy))
 			return dev_err_probe(dev, PTR_ERR(battmgr->wls_psy),
 					     "failed to register wireless charing power supply\n");
@@ -1775,6 +1990,11 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
 
 	ret = devm_work_autocancel(dev, &battmgr->enable_work,
 				   qcom_battmgr_enable_worker);
+	if (ret)
+		return ret;
+
+	ret = devm_work_autocancel(dev, &battmgr->xm_notify_work,
+				   qcom_battmgr_xm_notify_worker);
 	if (ret)
 		return ret;
 
