@@ -1753,10 +1753,15 @@ int ath11k_qmi_host_cap_send(struct ath11k_base *ab)
 		req.nm_modem |= SLEEP_CLOCK_SELECT_INTERNAL_BIT;
 	}
 
-	if (ab->hw_params.global_reset)
+	if (ab->hw_params.global_reset) {
+		req.nm_modem_valid = 1;
 		req.nm_modem |= PLATFORM_CAP_PCIE_GLOBAL_RESET;
+	}
 
-	req.nm_modem |= PLATFORM_CAP_PCIE_PME_D3COLD;
+	if (ab->hif.bus == ATH11K_BUS_PCI) {
+		req.nm_modem_valid = 1;
+		req.nm_modem |= PLATFORM_CAP_PCIE_PME_D3COLD;
+	}
 
 	ath11k_dbg(ab, ATH11K_DBG_QMI, "host cap request\n");
 
