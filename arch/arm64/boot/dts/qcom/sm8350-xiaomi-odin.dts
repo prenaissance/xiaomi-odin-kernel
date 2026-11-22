@@ -9,6 +9,7 @@
 #include <dt-bindings/interconnect/qcom,icc.h>
 #include <dt-bindings/interconnect/qcom,sm8350.h>
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/media/video-interfaces.h>
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/power/qcom,rpmhpd.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
@@ -95,6 +96,62 @@
 		startup-delay-us = <2000>;
 		enable-active-high;
 		regulator-boot-on;
+	};
+
+	vreg_cam_wide_vana: regulator-cam-wide-vana {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_cam_wide_vana";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		startup-delay-us = <135>;
+		off-on-delay-us = <20000>;
+		enable-active-high;
+		gpio = <&tlmm 6 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vreg_bob>;
+	};
+
+	vreg_cam_front_vana: regulator-cam-front-vana {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_cam_front_vana";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		startup-delay-us = <135>;
+		off-on-delay-us = <20000>;
+		enable-active-high;
+		gpio = <&tlmm 93 GPIO_ACTIVE_HIGH>;
+	};
+
+	vreg_cam_ultra_vana: regulator-cam-ultra-vana {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_cam_ultra_vana";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		startup-delay-us = <135>;
+		off-on-delay-us = <20000>;
+		enable-active-high;
+		gpio = <&tlmm 66 GPIO_ACTIVE_HIGH>;
+	};
+
+	vreg_cam_tele_vana: regulator-cam-tele-vana {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_cam_tele_vana";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		startup-delay-us = <135>;
+		off-on-delay-us = <20000>;
+		enable-active-high;
+		gpio = <&tlmm 34 GPIO_ACTIVE_HIGH>;
+	};
+
+	vreg_cam_ultra_tele_dvdd: regulator-cam-ultra-tele-dvdd {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_cam_ultra_tele_dvdd";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		startup-delay-us = <135>;
+		off-on-delay-us = <20000>;
+		enable-active-high;
+		gpio = <&tlmm 74 GPIO_ACTIVE_HIGH>;
 	};
 
 	gpio-keys {
@@ -734,6 +791,61 @@
 	};
 };
 
+&camss {
+	vdda-phy-supply = <&pm8350_l5>;
+	vdda-pll-supply = <&pm8350_l6>;
+	status = "okay";
+
+	ports {
+		port@3 {
+			csiphy3_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				remote-endpoint = <&ov13b10_ultra_ep>;
+			};
+		};
+	};
+};
+
+&cci0 {
+	status = "okay";
+};
+
+&cci1 {
+	status = "okay";
+};
+
+&cci1_i2c0 {
+	camera_ultra: camera@10 {
+		compatible = "ovti,ov13b10";
+		reg = <0x10>;
+
+		reset-gpios = <&tlmm 117 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk2_default>, <&cam_ultra_reset_default>;
+
+		clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clock-rates = <19200000>;
+
+		dovdd-supply = <&pm8008i_l6>;
+		avdd-supply = <&vreg_cam_ultra_vana>;
+		dvdd-supply = <&vreg_cam_ultra_tele_dvdd>;
+
+		orientation = <1>;
+		rotation = <90>;
+
+		port {
+			ov13b10_ultra_ep: endpoint {
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <560000000>;
+				remote-endpoint = <&csiphy3_ep>;
+			};
+		};
+	};
+};
+
 &cdsp {
 	firmware-name = "qcom/sm8350/xiaomi/odin/cdsp.mbn";
 	status = "okay";
@@ -821,6 +933,81 @@
 		cirrus,gpio2-src-select = <4>;
 		cirrus,gpio2-output-enable;
 		#sound-dai-cells = <1>;
+	};
+};
+
+&i2c13 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	pm8008i: pmic@8 {
+		compatible = "qcom,pm8008";
+		reg = <0x8>;
+
+		interrupts-extended = <&tlmm 32 IRQ_TYPE_EDGE_RISING>;
+		reset-gpios = <&tlmm 33 GPIO_ACTIVE_LOW>;
+
+		vdd-l1-l2-supply = <&pm8350_s12>;
+		vdd-l3-l4-supply = <&vreg_bob>;
+		vdd-l5-supply = <&pm8350c_s1>;
+		vdd-l6-supply = <&pm8350c_s1>;
+		vdd-l7-supply = <&vreg_bob>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&pm8008i_int_default>, <&pm8008i_reset_default>;
+
+		gpio-controller;
+		#gpio-cells = <2>;
+		gpio-ranges = <&pm8008i 0 0 2>;
+
+		interrupt-controller;
+		#interrupt-cells = <2>;
+
+		#thermal-sensor-cells = <0>;
+
+		regulators {
+			pm8008i_l1: ldo1 {
+				regulator-name = "pm8008i_l1";
+				regulator-min-microvolt = <1000000>;
+				regulator-max-microvolt = <1104000>;
+			};
+
+			pm8008i_l2: ldo2 {
+				regulator-name = "pm8008i_l2";
+				regulator-min-microvolt = <944000>;
+				regulator-max-microvolt = <1152000>;
+			};
+
+			pm8008i_l3: ldo3 {
+				regulator-name = "pm8008i_l3";
+				regulator-min-microvolt = <2696000>;
+				regulator-max-microvolt = <3000000>;
+			};
+
+			pm8008i_l4: ldo4 {
+				regulator-name = "pm8008i_l4";
+				regulator-min-microvolt = <2696000>;
+				regulator-max-microvolt = <2904000>;
+			};
+
+			pm8008i_l5: ldo5 {
+				regulator-name = "pm8008i_l5";
+				regulator-min-microvolt = <1696000>;
+				regulator-max-microvolt = <1800000>;
+			};
+
+			pm8008i_l6: ldo6 {
+				regulator-name = "pm8008i_l6";
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+			};
+
+			pm8008i_l7: ldo7 {
+				regulator-name = "pm8008i_l7";
+				regulator-min-microvolt = <2856000>;
+				regulator-max-microvolt = <3000000>;
+			};
+		};
 	};
 };
 
@@ -1231,6 +1418,27 @@
 		function = "gpio";
 		drive-strength = <8>;
 		bias-pull-up;
+	};
+
+	pm8008i_int_default: pm8008i-int-default-state {
+		pins = "gpio32";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	pm8008i_reset_default: pm8008i-reset-default-state {
+		pins = "gpio33";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	cam_ultra_reset_default: cam-ultra-reset-default-state {
+		pins = "gpio117";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
 	};
 
 	wcd938x_reset_default: wcd938x-reset-default-state {
