@@ -1210,7 +1210,7 @@ static irqreturn_t qcom_geni_serial_isr(int isr, void *dev)
 	struct tty_port *tport = &uport->state->port;
 	struct qcom_geni_serial_port *port = to_dev_port(uport);
 
-	if (uport->suspended)
+	if (pm_runtime_status_suspended(uport->dev))
 		return IRQ_NONE;
 
 	uart_port_lock(uport);
