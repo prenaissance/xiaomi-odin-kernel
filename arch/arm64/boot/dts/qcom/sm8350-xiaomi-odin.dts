@@ -1597,6 +1597,14 @@
 	vdda-pll-supply = <&pm8350_l5>;
 	vdda18-supply = <&pm8350c_l1>;
 	vdda33-supply = <&pm8350_l2>;
+	qcom,hs-disconnect-bp = <2156>;
+	qcom,squelch-detector-bp = <1590>;
+	qcom,hs-amplitude-bp = <2000>;
+	qcom,pre-emphasis-duration-bp = <20000>;
+	qcom,pre-emphasis-amplitude-bp = <40000>;
+	qcom,hs-rise-fall-time-bp = <5430>;
+	qcom,hs-crossover-voltage-microvolt = <(-31000)>;
+	qcom,hs-output-impedance-micro-ohms = <6100000>;
 	status = "okay";
 };
 
