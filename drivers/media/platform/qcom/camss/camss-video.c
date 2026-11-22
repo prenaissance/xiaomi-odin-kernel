@@ -283,11 +283,32 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
 
 		ret = v4l2_subdev_call(subdev, video, s_stream, 1);
 		if (ret < 0 && ret != -ENOIOCTLCMD)
-			goto error;
+			goto error_stop_subdevs;
 	}
 
 	return 0;
 
+error_stop_subdevs:
+	{
+		struct media_entity *stop_entity = &vdev->entity;
+
+		while (1) {
+			pad = &stop_entity->pads[0];
+			if (!(pad->flags & MEDIA_PAD_FL_SINK))
+				break;
+
+			pad = media_pad_remote_pad_first(pad);
+			if (!pad || !is_media_entity_v4l2_subdev(pad->entity))
+				break;
+
+			stop_entity = pad->entity;
+			if (stop_entity == entity)
+				break;
+
+			subdev = media_entity_to_v4l2_subdev(stop_entity);
+			v4l2_subdev_call(subdev, video, s_stream, 0);
+		}
+	}
 error:
 	video_device_pipeline_stop(vdev);
 
