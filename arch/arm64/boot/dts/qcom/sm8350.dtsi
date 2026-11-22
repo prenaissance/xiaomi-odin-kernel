@@ -1799,6 +1799,7 @@
 				<0 0>,
 				<0 0>,
 				<0 0>;
+			qcom,ice = <&ice>;
 			status = "disabled";
 		};
 
@@ -1822,6 +1823,16 @@
 			#phy-cells = <0>;
 
 			status = "disabled";
+		};
+
+		ice: crypto@1d88000 {
+			compatible = "qcom,sm8350-inline-crypto-engine",
+				     "qcom,inline-crypto-engine";
+			reg = <0 0x01d88000 0 0x8000>;
+			clocks = <&gcc GCC_UFS_PHY_ICE_CORE_CLK>,
+				 <&gcc GCC_UFS_PHY_AHB_CLK>;
+			clock-names = "core", "iface";
+			power-domains = <&gcc UFS_PHY_GDSC>;
 		};
 
 		cryptobam: dma-controller@1dc4000 {
