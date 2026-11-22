@@ -867,6 +867,10 @@
 	status = "okay";
 };
 
+&gpi_dma2 {
+	status = "okay";
+};
+
 &gpu {
 	status = "okay";
 };
@@ -1011,6 +1015,25 @@
 	};
 };
 
+&i2c15 {
+	clock-frequency = <400000>;
+	status = "okay";
+
+	nfc@28 {
+		compatible = "nxp,nxp-nci-i2c";
+		reg = <0x28>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <87 IRQ_TYPE_EDGE_RISING>;
+
+		enable-gpios = <&tlmm 62 GPIO_ACTIVE_HIGH>;
+		firmware-gpios = <&tlmm 86 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&nfc_default_state>;
+	};
+};
+
 &iris {
 	firmware-name = "qcom/sm8350/xiaomi/odin/vpu20_4v.mbn";
 	status = "okay";
@@ -1148,6 +1171,11 @@
 	};
 };
 
+&qup_i2c15_default {
+	/delete-property/ bias-disable;
+	bias-pull-up;
+};
+
 &qupv3_id_0 {
 	status = "okay";
 };
@@ -1184,6 +1212,18 @@
 	 */
 	sram@14680000 {
 		status = "disabled";
+	};
+};
+
+&spi2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&qup_spi2_default>;
+	status = "okay";
+
+	irled@0 {
+		compatible = "ir-spi-led";
+		reg = <0>;
+		spi-max-frequency = <19200000>;
 	};
 };
 
@@ -1285,6 +1325,36 @@
 		};
 	};
 
+	nfc_default_state: nfc-default-state {
+		int-pins {
+			pins = "gpio87";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		en-pins {
+			pins = "gpio62";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+
+		fw-pins {
+			pins = "gpio86";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		clkreq-pins {
+			pins = "gpio63";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+	};
+
 	pcie0_default_state: pcie0-default-state {
 		perst-pins {
 			pins = "gpio94";
@@ -1306,6 +1376,13 @@
 			drive-strength = <2>;
 			bias-pull-up;
 		};
+	};
+
+	qup_spi2_default: qup-spi2-default-state {
+		pins = "gpio12", "gpio13", "gpio14", "gpio15";
+		function = "qup2";
+		drive-strength = <6>;
+		bias-disable;
 	};
 
 	qup_spi11_default: qup-spi11-default-state {
