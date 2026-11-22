@@ -77,6 +77,7 @@ struct pmic_glink_ucsi {
 	spinlock_t state_lock;
 	bool ucsi_registered;
 	bool pd_running;
+	bool pd_reset;
 
 	u8 read_buf[UCSI_BUF_V2_SIZE];
 };
@@ -315,17 +316,22 @@ static void pmic_glink_ucsi_register(struct work_struct *work)
 	struct pmic_glink_ucsi *ucsi = container_of(work, struct pmic_glink_ucsi, register_work);
 	unsigned long flags;
 	bool pd_running;
+	bool pd_reset;
 
 	spin_lock_irqsave(&ucsi->state_lock, flags);
 	pd_running = ucsi->pd_running;
+	pd_reset = ucsi->pd_reset;
+	ucsi->pd_reset = false;
 	spin_unlock_irqrestore(&ucsi->state_lock, flags);
+
+	if (ucsi->ucsi_registered && (!pd_running || pd_reset)) {
+		ucsi_unregister(ucsi->ucsi);
+		ucsi->ucsi_registered = false;
+	}
 
 	if (!ucsi->ucsi_registered && pd_running) {
 		ucsi_register(ucsi->ucsi);
 		ucsi->ucsi_registered = true;
-	} else if (ucsi->ucsi_registered && !pd_running) {
-		ucsi_unregister(ucsi->ucsi);
-		ucsi->ucsi_registered = false;
 	}
 }
 
@@ -353,7 +359,12 @@ static void pmic_glink_ucsi_pdr_notify(void *priv, int state)
 	unsigned long flags;
 
 	spin_lock_irqsave(&ucsi->state_lock, flags);
-	ucsi->pd_running = (state == SERVREG_SERVICE_STATE_UP);
+	if (state == SERVREG_SERVICE_STATE_UP) {
+		ucsi->pd_running = true;
+	} else {
+		ucsi->pd_running = false;
+		ucsi->pd_reset = true;
+	}
 	spin_unlock_irqrestore(&ucsi->state_lock, flags);
 	schedule_work(&ucsi->register_work);
 }
