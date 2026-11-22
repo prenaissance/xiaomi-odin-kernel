@@ -1216,6 +1216,8 @@ static int ov13b10_power_on(struct device *dev)
 	struct ov13b10 *ov13b10 = to_ov13b10(sd);
 	int ret;
 
+	gpiod_set_value_cansleep(ov13b10->reset, 1);
+
 	ret = clk_prepare_enable(ov13b10->img_clk);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable imaging clock: %d", ret);
@@ -1229,6 +1231,7 @@ static int ov13b10_power_on(struct device *dev)
 		return ret;
 	}
 
+	usleep_range(1000, 2000);
 	gpiod_set_value_cansleep(ov13b10->reset, 0);
 	/* 5ms to wait ready after XSHUTDN assert */
 	usleep_range(5000, 5500);
@@ -1308,7 +1311,8 @@ static int ov13b10_set_stream(struct v4l2_subdev *sd, int enable)
 			goto err_rpm_put;
 	} else {
 		ov13b10_stop_streaming(ov13b);
-		pm_runtime_put(ov13b->dev);
+		pm_runtime_mark_last_busy(ov13b->dev);
+		pm_runtime_put_autosuspend(ov13b->dev);
 	}
 
 	mutex_unlock(&ov13b->mutex);
@@ -1316,7 +1320,7 @@ static int ov13b10_set_stream(struct v4l2_subdev *sd, int enable)
 	return ret;
 
 err_rpm_put:
-	pm_runtime_put(ov13b->dev);
+	pm_runtime_put_sync(ov13b->dev);
 err_unlock:
 	mutex_unlock(&ov13b->mutex);
 
@@ -1655,6 +1659,8 @@ static int ov13b10_probe(struct i2c_client *client)
 	if (full_power)
 		pm_runtime_set_active(ov13b->dev);
 	pm_runtime_enable(ov13b->dev);
+	pm_runtime_set_autosuspend_delay(ov13b->dev, 1000);
+	pm_runtime_use_autosuspend(ov13b->dev);
 	pm_runtime_idle(ov13b->dev);
 
 	ret = v4l2_async_register_subdev_sensor(&ov13b->sd);
@@ -1664,6 +1670,7 @@ static int ov13b10_probe(struct i2c_client *client)
 	return 0;
 
 error_media_entity_runtime_pm:
+	pm_runtime_dont_use_autosuspend(ov13b->dev);
 	pm_runtime_disable(ov13b->dev);
 	if (full_power)
 		pm_runtime_set_suspended(ov13b->dev);
@@ -1688,6 +1695,7 @@ static void ov13b10_remove(struct i2c_client *client)
 	media_entity_cleanup(&sd->entity);
 	ov13b10_free_controls(ov13b);
 
+	pm_runtime_dont_use_autosuspend(ov13b->dev);
 	pm_runtime_disable(ov13b->dev);
 	pm_runtime_set_suspended(ov13b->dev);
 }
@@ -1706,11 +1714,18 @@ static const struct acpi_device_id ov13b10_acpi_ids[] = {
 MODULE_DEVICE_TABLE(acpi, ov13b10_acpi_ids);
 #endif
 
+static const struct of_device_id ov13b10_of_match[] = {
+	{ .compatible = "ovti,ov13b10" },
+	{ /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(of, ov13b10_of_match);
+
 static struct i2c_driver ov13b10_i2c_driver = {
 	.driver = {
 		.name = "ov13b10",
 		.pm = pm_ptr(&ov13b10_pm_ops),
 		.acpi_match_table = ACPI_PTR(ov13b10_acpi_ids),
+		.of_match_table = ov13b10_of_match,
 	},
 	.probe = ov13b10_probe,
 	.remove = ov13b10_remove,
