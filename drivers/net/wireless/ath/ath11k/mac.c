@@ -6606,6 +6606,7 @@ static int ath11k_mac_config_mon_status_default(struct ath11k *ar, bool enable)
 static void ath11k_mac_wait_reconfigure(struct ath11k_base *ab)
 {
 	int recovery_start_count;
+	int expected;
 
 	if (!ab->is_reset)
 		return;
@@ -6613,7 +6614,11 @@ static void ath11k_mac_wait_reconfigure(struct ath11k_base *ab)
 	recovery_start_count = atomic_inc_return(&ab->recovery_start_count);
 	ath11k_dbg(ab, ATH11K_DBG_MAC, "recovery start count %d\n", recovery_start_count);
 
-	if (recovery_start_count == ab->num_radios) {
+	expected = atomic_read(&ab->recovery_radios);
+	if (!expected)
+		expected = ab->num_radios;
+
+	if (recovery_start_count == expected) {
 		complete(&ab->recovery_start);
 		ath11k_dbg(ab, ATH11K_DBG_MAC, "recovery started success\n");
 	}
@@ -6629,6 +6634,7 @@ static int ath11k_mac_op_start(struct ieee80211_hw *hw)
 	struct ath11k *ar = hw->priv;
 	struct ath11k_base *ab = ar->ab;
 	struct ath11k_pdev *pdev = ar->pdev;
+	unsigned long time_left;
 	int ret;
 
 	if (ath11k_ftm_mode) {
@@ -6641,6 +6647,20 @@ static int ath11k_mac_op_start(struct ieee80211_hw *hw)
 
 	switch (ar->state) {
 	case ATH11K_STATE_OFF:
+		if (ab->is_reset) {
+			mutex_unlock(&ar->conf_mutex);
+			time_left = wait_for_completion_timeout(&ab->reconfigure_complete,
+								ATH11K_RECONFIGURE_TIMEOUT_HZ);
+			mutex_lock(&ar->conf_mutex);
+			if (ar->state != ATH11K_STATE_OFF) {
+				mutex_unlock(&ar->conf_mutex);
+				return -EAGAIN;
+			}
+			if (!time_left) {
+				ret = -ETIMEDOUT;
+				goto err;
+			}
+		}
 		ar->state = ATH11K_STATE_ON;
 		break;
 	case ATH11K_STATE_RESTARTING:
@@ -9281,13 +9301,19 @@ ath11k_mac_op_reconfig_complete(struct ieee80211_hw *hw,
 			ath11k_reg_set_cc(ar);
 
 		if (ab->is_reset) {
+			int expected;
+
 			recovery_count = atomic_inc_return(&ab->recovery_count);
 			ath11k_dbg(ab, ATH11K_DBG_BOOT,
 				   "recovery count %d\n", recovery_count);
 			/* When there are multiple radios in an SOC,
 			 * the recovery has to be done for each radio
 			 */
-			if (recovery_count == ab->num_radios) {
+			expected = atomic_read(&ab->recovery_radios);
+			if (!expected)
+				expected = ab->num_radios;
+
+			if (recovery_count == expected) {
 				atomic_dec(&ab->reset_count);
 				complete(&ab->reset_complete);
 				ab->is_reset = false;

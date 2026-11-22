@@ -1025,6 +1025,7 @@ struct ath11k_base {
 	atomic_t reset_count;
 	atomic_t recovery_count;
 	atomic_t recovery_start_count;
+	atomic_t recovery_radios;
 	bool is_reset;
 	struct completion reset_complete;
 	struct completion reconfigure_complete;

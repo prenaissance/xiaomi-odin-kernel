@@ -2559,12 +2559,14 @@ static void ath11k_core_post_reconfigure_recovery(struct ath11k_base *ab)
 {
 	struct ath11k *ar;
 	struct ath11k_pdev *pdev;
+	bool restart_hw[MAX_RADIOS] = {};
+	int restarting = 0;
 	int i;
 
 	for (i = 0; i < ab->num_radios; i++) {
 		pdev = &ab->pdevs[i];
 		ar = pdev->ar;
-		if (!ar || ar->state == ATH11K_STATE_OFF)
+		if (!ar)
 			continue;
 
 		mutex_lock(&ar->conf_mutex);
@@ -2573,12 +2575,15 @@ static void ath11k_core_post_reconfigure_recovery(struct ath11k_base *ab)
 		case ATH11K_STATE_ON:
 			ar->state = ATH11K_STATE_RESTARTING;
 			ath11k_core_halt(ar);
-			ieee80211_restart_hw(ar->hw);
+			restart_hw[i] = true;
+			restarting++;
 			break;
 		case ATH11K_STATE_OFF:
-			ath11k_warn(ab,
-				    "cannot restart radio %d that hasn't been started\n",
-				    i);
+			ieee80211_wake_queues(ar->hw);
+			if (ab->is_reset)
+				ath11k_warn(ab,
+					    "cannot restart radio %d that hasn't been started\n",
+					    i);
 			break;
 		case ATH11K_STATE_RESTARTING:
 			break;
@@ -2597,6 +2602,14 @@ static void ath11k_core_post_reconfigure_recovery(struct ath11k_base *ab)
 
 		mutex_unlock(&ar->conf_mutex);
 	}
+
+	atomic_set(&ab->recovery_radios, restarting);
+
+	for (i = 0; i < ab->num_radios; i++) {
+		if (restart_hw[i])
+			ieee80211_restart_hw(ab->pdevs[i].ar->hw);
+	}
+
 	complete(&ab->driver_recovery);
 }
 
@@ -2611,11 +2624,18 @@ static void ath11k_core_restart(struct work_struct *work)
 		return;
 	}
 
-	if (ab->is_reset)
+	if (ab->is_reset) {
+		if (!atomic_read(&ab->recovery_radios)) {
+			atomic_dec(&ab->reset_count);
+			complete(&ab->reset_complete);
+			ab->is_reset = false;
+			atomic_set(&ab->fail_cont_count, 0);
+			ath11k_dbg(ab, ATH11K_DBG_BOOT, "reset success\n");
+		}
 		complete_all(&ab->reconfigure_complete);
-
-	if (!ab->is_reset)
+	} else {
 		ath11k_core_post_reconfigure_recovery(ab);
+	}
 
 	complete(&ab->restart_completed);
 }
@@ -2669,21 +2689,28 @@ static void ath11k_core_reset(struct work_struct *work)
 
 	ath11k_dbg(ab, ATH11K_DBG_BOOT, "reset starting\n");
 
-	ab->is_reset = true;
-	atomic_set(&ab->recovery_count, 0);
+	reinit_completion(&ab->reconfigure_complete);
 	reinit_completion(&ab->recovery_start);
+	atomic_set(&ab->recovery_count, 0);
 	atomic_set(&ab->recovery_start_count, 0);
+	atomic_set(&ab->recovery_radios, 0);
+	/* Ensure reconfigure_complete is reinitialized before exposing is_reset */
+	smp_wmb();
+	ab->is_reset = true;
 
 	ath11k_coredump_collect(ab);
 	ath11k_core_pre_reconfigure_recovery(ab);
 
-	reinit_completion(&ab->reconfigure_complete);
 	ath11k_core_post_reconfigure_recovery(ab);
 
-	ath11k_dbg(ab, ATH11K_DBG_BOOT, "waiting recovery start...\n");
+	if (atomic_read(&ab->recovery_radios) > 0) {
+		ath11k_dbg(ab, ATH11K_DBG_BOOT, "waiting recovery start...\n");
 
-	time_left = wait_for_completion_timeout(&ab->recovery_start,
-						ATH11K_RECOVER_START_TIMEOUT_HZ);
+		time_left = wait_for_completion_timeout(&ab->recovery_start,
+							ATH11K_RECOVER_START_TIMEOUT_HZ);
+		if (!time_left)
+			ath11k_warn(ab, "recovery start timeout\n");
+	}
 
 	ath11k_hif_power_down(ab, false);
 	ath11k_hif_power_up(ab);
