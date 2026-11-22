@@ -1599,6 +1599,10 @@
 			iommu-map = <0x0   &apps_smmu 0x1c00 0x0 0x1>,
 				    <0x100 &apps_smmu 0x1c01 0x0 0x1>;
 
+			interconnects = <&aggre2_noc MASTER_PCIE_0 0 &mc_virt SLAVE_EBI1 0>,
+					<&gem_noc MASTER_APPSS_PROC 0 &config_noc SLAVE_PCIE_0 0>;
+			interconnect-names = "pcie-mem", "cpu-pcie";
+
 			resets = <&gcc GCC_PCIE_0_BCR>;
 			reset-names = "pci";
 
@@ -1706,6 +1710,10 @@
 
 			iommu-map = <0x0   &apps_smmu 0x1c80 0x0 0x1>,
 				    <0x100 &apps_smmu 0x1c81 0x0 0x1>;
+
+			interconnects = <&aggre2_noc MASTER_PCIE_1 0 &mc_virt SLAVE_EBI1 0>,
+					<&gem_noc MASTER_APPSS_PROC 0 &config_noc SLAVE_PCIE_1 0>;
+			interconnect-names = "pcie-mem", "cpu-pcie";
 
 			resets = <&gcc GCC_PCIE_1_BCR>;
 			reset-names = "pci";
