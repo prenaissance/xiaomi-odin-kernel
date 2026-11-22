@@ -3,9 +3,9 @@
  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
  */
 
+#include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/platform_device.h>
-#include <linux/pm_clock.h>
 #include <linux/pm_runtime.h>
 #include <dt-bindings/phy/phy.h>
 
@@ -680,19 +680,16 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	phy->ahb_clk = devm_clk_get(dev, "iface");
+	if (IS_ERR(phy->ahb_clk))
+		return dev_err_probe(dev, PTR_ERR(phy->ahb_clk),
+				     "Unable to get iface clk\n");
+
 	platform_set_drvdata(pdev, phy);
 
 	ret = devm_pm_runtime_enable(dev);
 	if (ret)
 		return ret;
-
-	ret = devm_pm_clk_create(dev);
-	if (ret)
-		return ret;
-
-	ret = pm_clk_add(dev, "iface");
-	if (ret < 0)
-		return dev_err_probe(dev, ret, "Unable to get iface clk\n");
 
 	ret = pm_runtime_resume_and_get(dev);
 	if (ret)
@@ -700,7 +697,7 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 
 	ret = regulator_bulk_enable(phy->cfg->num_regulators, phy->supplies);
 	if (ret) {
-		pm_runtime_put(dev);
+		pm_runtime_put_sync(dev);
 		return dev_err_probe(dev, ret, "Failed to enable supplies\n");
 	}
 
@@ -723,7 +720,7 @@ static int dsi_phy_driver_probe(struct platform_device *pdev)
 	if (!phy->state_saved && phy->cfg->ops.disable)
 		phy->cfg->ops.disable(phy);
 	regulator_bulk_disable(phy->cfg->num_regulators, phy->supplies);
-	pm_runtime_put(dev);
+	pm_runtime_put_sync(dev);
 
 	return 0;
 
@@ -732,12 +729,29 @@ err_clk_provider:
 		phy->cfg->ops.disable(phy);
 err_pll_init:
 	regulator_bulk_disable(phy->cfg->num_regulators, phy->supplies);
-	pm_runtime_put(dev);
+	pm_runtime_put_sync(dev);
 	return ret;
 }
 
+static int dsi_phy_runtime_suspend(struct device *dev)
+{
+	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
+
+	clk_disable_unprepare(phy->ahb_clk);
+
+	return 0;
+}
+
+static int dsi_phy_runtime_resume(struct device *dev)
+{
+	struct msm_dsi_phy *phy = dev_get_drvdata(dev);
+
+	return clk_prepare_enable(phy->ahb_clk);
+}
+
 static const struct dev_pm_ops dsi_phy_pm_ops = {
-	SET_RUNTIME_PM_OPS(pm_clk_suspend, pm_clk_resume, NULL)
+	RUNTIME_PM_OPS(dsi_phy_runtime_suspend, dsi_phy_runtime_resume, NULL)
+	SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
 };
 
 static struct platform_driver dsi_phy_platform_driver = {
@@ -745,7 +759,7 @@ static struct platform_driver dsi_phy_platform_driver = {
 	.driver     = {
 		.name   = "msm_dsi_phy",
 		.of_match_table = dsi_phy_dt_match,
-		.pm = &dsi_phy_pm_ops,
+		.pm = pm_ptr(&dsi_phy_pm_ops),
 	},
 };
 
@@ -817,7 +831,7 @@ pll_restor_fail:
 phy_en_fail:
 	regulator_bulk_disable(phy->cfg->num_regulators, phy->supplies);
 reg_en_fail:
-	pm_runtime_put(dev);
+	pm_runtime_put_sync(dev);
 res_en_fail:
 	return ret;
 }
@@ -830,7 +844,7 @@ void msm_dsi_phy_disable(struct msm_dsi_phy *phy)
 	phy->cfg->ops.disable(phy);
 
 	regulator_bulk_disable(phy->cfg->num_regulators, phy->supplies);
-	pm_runtime_put(&phy->pdev->dev);
+	pm_runtime_put_sync(&phy->pdev->dev);
 }
 
 void msm_dsi_phy_set_usecase(struct msm_dsi_phy *phy,
