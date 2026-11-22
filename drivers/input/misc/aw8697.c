@@ -14,6 +14,7 @@
 #include <linux/input.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
+#include <linux/pm.h>
 #include <linux/regmap.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
@@ -659,6 +660,23 @@ static int aw8697_probe(struct i2c_client *client)
 	return 0;
 }
 
+static int aw8697_suspend(struct device *dev)
+{
+	struct aw8697_data *haptics = dev_get_drvdata(dev);
+	int err;
+
+	cancel_work_sync(&haptics->play_work);
+
+	mutex_lock(&haptics->lock);
+	WRITE_ONCE(haptics->level, 0);
+	err = aw8697_stop(haptics);
+	mutex_unlock(&haptics->lock);
+
+	return err;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(aw8697_pm_ops, aw8697_suspend, NULL);
+
 static const struct of_device_id aw8697_of_id[] = {
 	{ .compatible = "awinic,aw8697" },
 	{ }
@@ -669,6 +687,7 @@ static struct i2c_driver aw8697_driver = {
 	.driver = {
 		.name = "aw8697-haptics",
 		.of_match_table = aw8697_of_id,
+		.pm = pm_sleep_ptr(&aw8697_pm_ops),
 	},
 	.probe = aw8697_probe,
 };
