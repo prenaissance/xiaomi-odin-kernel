@@ -99,12 +99,23 @@ struct ov13b10_link_freq_config {
 	struct ov13b10_reg_list reg_list;
 };
 
+/* Native sensor pixel array dimensions */
+#define OV13B10_NATIVE_WIDTH		4240
+#define OV13B10_NATIVE_HEIGHT		3152
+#define OV13B10_PIXEL_ARRAY_LEFT	16
+#define OV13B10_PIXEL_ARRAY_TOP		16
+#define OV13B10_PIXEL_ARRAY_WIDTH	4208
+#define OV13B10_PIXEL_ARRAY_HEIGHT	3120
+
 /* Mode : resolution and related config&values */
 struct ov13b10_mode {
 	/* Frame width */
 	u32 width;
 	/* Frame height */
 	u32 height;
+
+	/* Analog crop rectangle */
+	struct v4l2_rect crop;
 
 	/* V-timing */
 	u32 vts_def;
@@ -612,6 +623,12 @@ static const struct ov13b10_mode supported_4_lanes_modes[] = {
 	{
 		.width = 4208,
 		.height = 3120,
+		.crop = {
+			.left = 16,
+			.top = 16,
+			.width = 4208,
+			.height = 3120,
+		},
 		.vts_def = OV13B10_VTS_30FPS,
 		.vts_min = OV13B10_VTS_30FPS,
 		.ppl = 4704,
@@ -624,6 +641,12 @@ static const struct ov13b10_mode supported_4_lanes_modes[] = {
 	{
 		.width = 4160,
 		.height = 3120,
+		.crop = {
+			.left = 40,
+			.top = 16,
+			.width = 4160,
+			.height = 3120,
+		},
 		.vts_def = OV13B10_VTS_30FPS,
 		.vts_min = OV13B10_VTS_30FPS,
 		.ppl = 4704,
@@ -636,6 +659,12 @@ static const struct ov13b10_mode supported_4_lanes_modes[] = {
 	{
 		.width = 4160,
 		.height = 2340,
+		.crop = {
+			.left = 40,
+			.top = 406,
+			.width = 4160,
+			.height = 2340,
+		},
 		.vts_def = OV13B10_VTS_30FPS,
 		.vts_min = OV13B10_VTS_30FPS,
 		.ppl = 4704,
@@ -648,6 +677,12 @@ static const struct ov13b10_mode supported_4_lanes_modes[] = {
 	{
 		.width = 2104,
 		.height = 1560,
+		.crop = {
+			.left = 16,
+			.top = 16,
+			.width = 4208,
+			.height = 3120,
+		},
 		.vts_def = OV13B10_VTS_60FPS,
 		.vts_min = OV13B10_VTS_60FPS,
 		.ppl = 4704,
@@ -660,6 +695,12 @@ static const struct ov13b10_mode supported_4_lanes_modes[] = {
 	{
 		.width = 2080,
 		.height = 1170,
+		.crop = {
+			.left = 40,
+			.top = 406,
+			.width = 4160,
+			.height = 2340,
+		},
 		.vts_def = OV13B10_VTS_60FPS,
 		.vts_min = OV13B10_VTS_60FPS,
 		.ppl = 4704,
@@ -672,6 +713,12 @@ static const struct ov13b10_mode supported_4_lanes_modes[] = {
 	{
 		.width = 1364,
 		.height = 768,
+		.crop = {
+			.left = 756,
+			.top = 854,
+			.width = 2728,
+			.height = 1536,
+		},
 		.vts_def = OV13B10_VTS_120FPS,
 		.vts_min = OV13B10_VTS_120FPS,
 		.link_freq_index = OV13B10_LINK_FREQ_INDEX_0,
@@ -688,6 +735,12 @@ static const struct ov13b10_mode supported_2_lanes_modes[] = {
 	{
 		.width = 2104,
 		.height = 1560,
+		.crop = {
+			.left = 16,
+			.top = 16,
+			.width = 4208,
+			.height = 3120,
+		},
 		.vts_def = OV13B10_VTS_60FPS,
 		.vts_min = OV13B10_VTS_60FPS,
 		.link_freq_index = OV13B10_LINK_FREQ_INDEX_0,
@@ -843,8 +896,9 @@ static int ov13b10_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct ov13b10 *ov13b = to_ov13b10(sd);
 	const struct ov13b10_mode *default_mode = ov13b->supported_modes;
-	struct v4l2_mbus_framefmt *try_fmt = v4l2_subdev_state_get_format(fh->state,
-									  0);
+	struct v4l2_mbus_framefmt *try_fmt =
+		v4l2_subdev_state_get_format(fh->state, 0);
+	struct v4l2_rect *try_crop = v4l2_subdev_state_get_crop(fh->state, 0);
 
 	mutex_lock(&ov13b->mutex);
 
@@ -854,7 +908,9 @@ static int ov13b10_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	try_fmt->code = MEDIA_BUS_FMT_SGRBG10_1X10;
 	try_fmt->field = V4L2_FIELD_NONE;
 
-	/* No crop or compose */
+	/* Initialize try_crop */
+	*try_crop = default_mode->crop;
+
 	mutex_unlock(&ov13b->mutex);
 
 	return 0;
@@ -1146,6 +1202,7 @@ ov13b10_set_pad_format(struct v4l2_subdev *sd,
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 		framefmt = v4l2_subdev_state_get_format(sd_state, fmt->pad);
 		*framefmt = fmt->format;
+		*v4l2_subdev_state_get_crop(sd_state, fmt->pad) = mode->crop;
 	} else {
 		ov13b->cur_mode = mode;
 		__v4l2_ctrl_s_ctrl(ov13b->link_freq, mode->link_freq_index);
@@ -1339,6 +1396,44 @@ static int ov13b10_resume(struct device *dev)
 	return ov13b10_power_on(dev);
 }
 
+static int ov13b10_get_selection(struct v4l2_subdev *sd,
+				 const struct v4l2_subdev_client_info *ci,
+				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_selection *sel)
+{
+	struct ov13b10 *ov13b = to_ov13b10(sd);
+
+	switch (sel->target) {
+	case V4L2_SEL_TGT_CROP:
+		mutex_lock(&ov13b->mutex);
+		if (sel->which == V4L2_SUBDEV_FORMAT_TRY)
+			sel->r = *v4l2_subdev_state_get_crop(sd_state,
+							     sel->pad);
+		else
+			sel->r = ov13b->cur_mode->crop;
+		mutex_unlock(&ov13b->mutex);
+		return 0;
+
+	case V4L2_SEL_TGT_NATIVE_SIZE:
+		sel->r.left = 0;
+		sel->r.top = 0;
+		sel->r.width = OV13B10_NATIVE_WIDTH;
+		sel->r.height = OV13B10_NATIVE_HEIGHT;
+		return 0;
+
+	case V4L2_SEL_TGT_CROP_DEFAULT:
+	case V4L2_SEL_TGT_CROP_BOUNDS:
+		sel->r.left = OV13B10_PIXEL_ARRAY_LEFT;
+		sel->r.top = OV13B10_PIXEL_ARRAY_TOP;
+		sel->r.width = OV13B10_PIXEL_ARRAY_WIDTH;
+		sel->r.height = OV13B10_PIXEL_ARRAY_HEIGHT;
+		return 0;
+
+	default:
+		return -EINVAL;
+	}
+}
+
 static const struct v4l2_subdev_video_ops ov13b10_video_ops = {
 	.s_stream = ov13b10_set_stream,
 };
@@ -1348,6 +1443,7 @@ static const struct v4l2_subdev_pad_ops ov13b10_pad_ops = {
 	.get_fmt = ov13b10_get_pad_format,
 	.set_fmt = ov13b10_set_pad_format,
 	.enum_frame_size = ov13b10_enum_frame_size,
+	.get_selection = ov13b10_get_selection,
 };
 
 static const struct v4l2_subdev_ops ov13b10_subdev_ops = {
