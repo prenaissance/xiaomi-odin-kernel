@@ -15,10 +15,11 @@
 
 #include <drm/display/drm_dsc.h>
 #include <drm/display/drm_dsc_helper.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_encoder.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
-#include <drm/drm_probe_helper.h>
 
 #include <video/mipi_display.h>
 
@@ -67,7 +68,8 @@ static void xiaomi_odin_csot_reset(struct xiaomi_odin_csot *ctx)
 	mipi_dsi_dcs_write_seq_multi((dsi_ctx), NT37701_CMD_SWITCH_PAGE, \
 				     0x55, 0xaa, 0x52, 0x08, (page))
 
-static void xiaomi_odin_csot_on(struct mipi_dsi_multi_context *dsi_ctx)
+static void xiaomi_odin_csot_on(struct mipi_dsi_multi_context *dsi_ctx,
+				unsigned int vrefresh)
 {
 	dsi_ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 
@@ -87,11 +89,24 @@ static void xiaomi_odin_csot_on(struct mipi_dsi_multi_context *dsi_ctx)
 	mipi_dsi_dcs_write_seq_multi(dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY,
 				     0x20);
 
-	/* Select 120 Hz scan timing */
+	/* Select scan refresh rate */
 	nt37701_switch_page(dsi_ctx, 0x02);
 	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x6f, 0x03);
-	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xbf, 0x03);
-	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x2f, 0x03);
+	switch (vrefresh) {
+	case 60:
+		mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xbf, 0x02);
+		mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x2f, 0x01);
+		break;
+	case 90:
+		mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xbf, 0x05);
+		mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x2f, 0x02);
+		break;
+	case 120:
+	default:
+		mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xbf, 0x03);
+		mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x2f, 0x03);
+		break;
+	}
 
 	nt37701_switch_page(dsi_ctx, 0x01);
 	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xc3,
@@ -280,12 +295,27 @@ static int xiaomi_odin_csot_off(struct xiaomi_odin_csot *ctx)
 	return dsi_ctx.accum_err;
 }
 
+static unsigned int xiaomi_odin_csot_get_vrefresh(struct drm_panel *panel)
+{
+	struct drm_encoder *encoder = panel->bridge.encoder;
+
+	if (encoder && encoder->crtc && encoder->crtc->state) {
+		unsigned int vrefresh =
+			drm_mode_vrefresh(&encoder->crtc->state->adjusted_mode);
+		if (vrefresh)
+			return vrefresh;
+	}
+
+	return 120;
+}
+
 static int xiaomi_odin_csot_prepare(struct drm_panel *panel)
 {
 	struct xiaomi_odin_csot *ctx = to_xiaomi_odin_csot(panel);
 	struct mipi_dsi_device *dsi = ctx->dsi;
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
 	struct drm_dsc_picture_parameter_set pps;
+	unsigned int vrefresh = xiaomi_odin_csot_get_vrefresh(panel);
 	int ret;
 
 	ret = regulator_bulk_enable(ARRAY_SIZE(xiaomi_odin_csot_supplies),
@@ -296,7 +326,7 @@ static int xiaomi_odin_csot_prepare(struct drm_panel *panel)
 	usleep_range(5000, 6000);
 	xiaomi_odin_csot_reset(ctx);
 
-	xiaomi_odin_csot_on(&dsi_ctx);
+	xiaomi_odin_csot_on(&dsi_ctx, vrefresh);
 	/*
 	 * Novatek NT37701 10bpc/8bpp DSC 1.1 QP table uses range_max_qp[0] = 8
 	 * rather than the pre-SCR default of 4.
@@ -372,26 +402,75 @@ static int xiaomi_odin_csot_disable(struct drm_panel *panel)
 	return 0;
 }
 
-static const struct drm_display_mode xiaomi_odin_csot_120hz_mode = {
-	.clock = (1080 + 40 + 10 + 20) * (2400 + 652 + 2 + 500) * 120 / 1000,
-	.hdisplay = 1080,
-	.hsync_start = 1080 + 40,
-	.hsync_end = 1080 + 40 + 10,
-	.htotal = 1080 + 40 + 10 + 20,
-	.vdisplay = 2400,
-	.vsync_start = 2400 + 652,
-	.vsync_end = 2400 + 652 + 2,
-	.vtotal = 2400 + 652 + 2 + 500,
-	.width_mm = 70,
-	.height_mm = 154,
-	.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
+static const struct drm_display_mode xiaomi_odin_csot_modes[] = {
+	{
+		/* 120 Hz */
+		.clock = (1080 + 40 + 10 + 20) * (2400 + 652 + 2 + 500) * 120 / 1000,
+		.hdisplay = 1080,
+		.hsync_start = 1080 + 40,
+		.hsync_end = 1080 + 40 + 10,
+		.htotal = 1080 + 40 + 10 + 20,
+		.vdisplay = 2400,
+		.vsync_start = 2400 + 652,
+		.vsync_end = 2400 + 652 + 2,
+		.vtotal = 2400 + 652 + 2 + 500,
+		.width_mm = 70,
+		.height_mm = 154,
+		.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
+	},
+	{
+		/* 90 Hz */
+		.clock = (1080 + 40 + 10 + 20) * (2400 + 1336 + 2 + 1000) * 90 / 1000,
+		.hdisplay = 1080,
+		.hsync_start = 1080 + 40,
+		.hsync_end = 1080 + 40 + 10,
+		.htotal = 1080 + 40 + 10 + 20,
+		.vdisplay = 2400,
+		.vsync_start = 2400 + 1336,
+		.vsync_end = 2400 + 1336 + 2,
+		.vtotal = 2400 + 1336 + 2 + 1000,
+		.width_mm = 70,
+		.height_mm = 154,
+		.type = DRM_MODE_TYPE_DRIVER,
+	},
+	{
+		/* 60 Hz */
+		.clock = (1080 + 40 + 10 + 20) * (2400 + 2704 + 2 + 2000) * 60 / 1000,
+		.hdisplay = 1080,
+		.hsync_start = 1080 + 40,
+		.hsync_end = 1080 + 40 + 10,
+		.htotal = 1080 + 40 + 10 + 20,
+		.vdisplay = 2400,
+		.vsync_start = 2400 + 2704,
+		.vsync_end = 2400 + 2704 + 2,
+		.vtotal = 2400 + 2704 + 2 + 2000,
+		.width_mm = 70,
+		.height_mm = 154,
+		.type = DRM_MODE_TYPE_DRIVER,
+	},
 };
 
 static int xiaomi_odin_csot_get_modes(struct drm_panel *panel,
 				      struct drm_connector *connector)
 {
-	return drm_connector_helper_get_modes_fixed(connector,
-						    &xiaomi_odin_csot_120hz_mode);
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(xiaomi_odin_csot_modes); i++) {
+		const struct drm_display_mode *m = &xiaomi_odin_csot_modes[i];
+		struct drm_display_mode *mode;
+
+		mode = drm_mode_duplicate(connector->dev, m);
+		if (!mode)
+			return -ENOMEM;
+
+		drm_mode_set_name(mode);
+		drm_mode_probed_add(connector, mode);
+	}
+
+	connector->display_info.width_mm = xiaomi_odin_csot_modes[0].width_mm;
+	connector->display_info.height_mm = xiaomi_odin_csot_modes[0].height_mm;
+
+	return ARRAY_SIZE(xiaomi_odin_csot_modes);
 }
 
 static const struct drm_panel_funcs xiaomi_odin_csot_panel_funcs = {
