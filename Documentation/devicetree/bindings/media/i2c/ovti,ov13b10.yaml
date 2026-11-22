@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/media/i2c/ovti,ov13b10.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: OmniVision OV13B10 1/3-inch 13MP CMOS image sensor
+
+maintainers:
+  - Alexandru Andries <alex.andries.aa@gmail.com>
+
+description:
+  The OmniVision OV13B10 is a 1/3-inch 13-megapixel CMOS image sensor with an
+  active array size of 4208 x 3120. It is programmable through an I2C
+  interface and outputs 10-bit raw Bayer image data over 2 or 4 MIPI CSI-2
+  D-PHY lanes.
+
+allOf:
+  - $ref: /schemas/media/video-interface-devices.yaml#
+
+properties:
+  compatible:
+    const: ovti,ov13b10
+
+  reg:
+    maxItems: 1
+
+  clocks:
+    description: External clock input (19.2 MHz)
+    maxItems: 1
+
+  reset-gpios:
+    description: Active low XSHUTDN pin
+    maxItems: 1
+
+  dovdd-supply:
+    description: Digital I/O power supply (1.8V)
+
+  avdd-supply:
+    description: Analog power supply (2.8V)
+
+  dvdd-supply:
+    description: Digital core power supply (1.2V)
+
+  port:
+    $ref: /schemas/graph.yaml#/$defs/port-base
+    additionalProperties: false
+
+    properties:
+      endpoint:
+        $ref: /schemas/media/video-interfaces.yaml#
+        unevaluatedProperties: false
+
+        properties:
+          data-lanes:
+            oneOf:
+              - items:
+                  - const: 1
+                  - const: 2
+              - items:
+                  - const: 1
+                  - const: 2
+                  - const: 3
+                  - const: 4
+
+        required:
+          - data-lanes
+          - link-frequencies
+
+    required:
+      - endpoint
+
+required:
+  - compatible
+  - reg
+  - clocks
+  - port
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/gpio/gpio.h>
+    #include <dt-bindings/media/video-interface-devices.h>
+
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        camera@10 {
+            compatible = "ovti,ov13b10";
+            reg = <0x10>;
+
+            clocks = <&camcc_mclk2>;
+            assigned-clocks = <&camcc_mclk2>;
+            assigned-clock-rates = <19200000>;
+
+            reset-gpios = <&tlmm 117 GPIO_ACTIVE_LOW>;
+
+            dovdd-supply = <&pm8008i_l6>;
+            avdd-supply = <&vreg_cam_ultra_vana>;
+            dvdd-supply = <&vreg_cam_ultra_tele_dvdd>;
+
+            orientation = <MEDIA_ORIENTATION_BACK>;
+            rotation = <90>;
+
+            port {
+                endpoint {
+                    data-lanes = <1 2 3 4>;
+                    link-frequencies = /bits/ 64 <560000000>;
+                    remote-endpoint = <&csiphy3_ep>;
+                };
+            };
+        };
+    };
+...
