@@ -418,11 +418,33 @@ static struct platform_driver adreno_driver = {
 	},
 };
 
+static int adreno_gmu_probe(struct platform_device *pdev)
+{
+	return 0;
+}
+
+static const struct of_device_id adreno_gmu_dt_match[] = {
+	{ .compatible = "qcom,adreno-gmu" },
+	{ .compatible = "qcom,adreno-gmu-wrapper" },
+	{}
+};
+MODULE_DEVICE_TABLE(of, adreno_gmu_dt_match);
+
+static struct platform_driver adreno_gmu_driver = {
+	.probe = adreno_gmu_probe,
+	.driver = {
+		.name = "adreno-gmu",
+		.of_match_table = adreno_gmu_dt_match,
+		.suppress_bind_attrs = true,
+	},
+};
+
 void __init adreno_register(void)
 {
 	if (skip_gpu)
 		return;
 
+	platform_driver_register(&adreno_gmu_driver);
 	platform_driver_register(&adreno_driver);
 }
 
@@ -432,4 +454,5 @@ void __exit adreno_unregister(void)
 		return;
 
 	platform_driver_unregister(&adreno_driver);
+	platform_driver_unregister(&adreno_gmu_driver);
 }

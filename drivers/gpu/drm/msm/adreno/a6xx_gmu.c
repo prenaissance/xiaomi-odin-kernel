@@ -2246,10 +2246,19 @@ int a6xx_gmu_wrapper_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
 	struct a6xx_gmu *gmu = &a6xx_gpu->gmu;
 	resource_size_t start;
 	struct resource *res;
+	bool bound;
 	int ret;
 
 	if (!pdev)
 		return -ENODEV;
+
+	device_lock(&pdev->dev);
+	bound = device_is_bound(&pdev->dev);
+	device_unlock(&pdev->dev);
+	if (!bound) {
+		put_device(&pdev->dev);
+		return -EPROBE_DEFER;
+	}
 
 	gmu->dev = &pdev->dev;
 
@@ -2334,10 +2343,19 @@ int a6xx_gmu_init(struct a6xx_gpu *a6xx_gpu, struct device_node *node)
 	struct device_link *cx_link;
 	resource_size_t start;
 	struct resource *res;
+	bool bound;
 	int ret;
 
 	if (!pdev)
 		return -ENODEV;
+
+	device_lock(&pdev->dev);
+	bound = device_is_bound(&pdev->dev);
+	device_unlock(&pdev->dev);
+	if (!bound) {
+		put_device(&pdev->dev);
+		return -EPROBE_DEFER;
+	}
 
 	gmu->dev = &pdev->dev;
 
