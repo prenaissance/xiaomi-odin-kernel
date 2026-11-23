@@ -74,13 +74,74 @@ static unsigned long get_freq(struct msm_gpu *gpu)
 	return clk_get_rate(gpu->core_clk);
 }
 
+static u64 msm_devfreq_sample_busy_us_locked(struct msm_gpu *gpu)
+{
+	struct msm_gpu_devfreq *df = &gpu->devfreq;
+	unsigned long sample_rate = 0;
+	u64 busy_cycles, busy_time;
+
+	if (df->suspended)
+		return 0;
+
+	busy_cycles = gpu->funcs->gpu_busy(gpu, &sample_rate);
+	busy_time = busy_cycles - df->busy_cycles;
+	df->busy_cycles = busy_cycles;
+
+	if (!sample_rate)
+		return 0;
+
+	busy_time *= USEC_PER_SEC;
+	busy_time = div64_ul(busy_time, sample_rate);
+	df->total_busy_us += busy_time;
+
+	return busy_time;
+}
+
+static ssize_t gpu_busy_percent_show(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct msm_gpu *gpu = dev_to_gpu(dev);
+	struct msm_gpu_devfreq *df = &gpu->devfreq;
+	unsigned int pct;
+
+	mutex_lock(&df->lock);
+	pct = df->suspended ? 0 : df->busy_percent;
+	mutex_unlock(&df->lock);
+
+	return sysfs_emit(buf, "%u\n", pct);
+}
+static DEVICE_ATTR_RO(gpu_busy_percent);
+
+static ssize_t gpu_busy_us_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct msm_gpu *gpu = dev_to_gpu(dev);
+	struct msm_gpu_devfreq *df = &gpu->devfreq;
+	u64 busy_us;
+
+	mutex_lock(&df->lock);
+	if (!df->suspended) {
+		unsigned long sample_rate = 0;
+		u64 delta = gpu->funcs->gpu_busy(gpu, &sample_rate) - df->busy_cycles;
+
+		busy_us = df->total_busy_us;
+		if (sample_rate)
+			busy_us += div64_ul(delta * USEC_PER_SEC, sample_rate);
+	} else {
+		busy_us = df->total_busy_us;
+	}
+	mutex_unlock(&df->lock);
+
+	return sysfs_emit(buf, "%llu\n", busy_us);
+}
+static DEVICE_ATTR_RO(gpu_busy_us);
+
 static int msm_devfreq_get_dev_status(struct device *dev,
 		struct devfreq_dev_status *status)
 {
 	struct msm_gpu *gpu = dev_to_gpu(dev);
 	struct msm_gpu_devfreq *df = &gpu->devfreq;
-	u64 busy_cycles, busy_time;
-	unsigned long sample_rate;
+	u64 busy_time;
 	ktime_t time;
 
 	mutex_lock(&df->lock);
@@ -91,19 +152,19 @@ static int msm_devfreq_get_dev_status(struct device *dev,
 	df->time = time;
 
 	if (df->suspended) {
+		df->busy_percent = 0;
 		mutex_unlock(&df->lock);
 		status->busy_time = 0;
 		return 0;
 	}
 
-	busy_cycles = gpu->funcs->gpu_busy(gpu, &sample_rate);
-	busy_time = busy_cycles - df->busy_cycles;
-	df->busy_cycles = busy_cycles;
+	busy_time = msm_devfreq_sample_busy_us_locked(gpu);
+	if (status->total_time)
+		df->busy_percent = min_t(u64, 100,
+					 div64_ul(busy_time * 100, status->total_time));
 
 	mutex_unlock(&df->lock);
 
-	busy_time *= USEC_PER_SEC;
-	busy_time = div64_ul(busy_time, sample_rate);
 	if (WARN_ON(busy_time > ~0LU))
 		busy_time = ~0LU;
 
@@ -200,6 +261,9 @@ void msm_devfreq_init(struct msm_gpu *gpu)
 			      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	msm_hrtimer_work_init(&df->idle_work, gpu->worker, msm_devfreq_idle_work,
 			      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+
+	device_create_file(&gpu->pdev->dev, &dev_attr_gpu_busy_percent);
+	device_create_file(&gpu->pdev->dev, &dev_attr_gpu_busy_us);
 }
 
 static void cancel_idle_work(struct msm_gpu_devfreq *df)
@@ -221,6 +285,8 @@ void msm_devfreq_cleanup(struct msm_gpu *gpu)
 	if (!has_devfreq(gpu))
 		return;
 
+	device_remove_file(&gpu->pdev->dev, &dev_attr_gpu_busy_us);
+	device_remove_file(&gpu->pdev->dev, &dev_attr_gpu_busy_percent);
 	devfreq_cooling_unregister(gpu->cooling);
 	dev_pm_qos_remove_request(&df->boost_freq);
 }
@@ -250,6 +316,8 @@ void msm_devfreq_suspend(struct msm_gpu *gpu)
 		return;
 
 	mutex_lock(&df->lock);
+	msm_devfreq_sample_busy_us_locked(gpu);
+	df->busy_percent = 0;
 	df->suspended = true;
 	mutex_unlock(&df->lock);
 

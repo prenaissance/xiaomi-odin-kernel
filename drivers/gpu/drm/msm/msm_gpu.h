@@ -143,11 +143,14 @@ struct msm_gpu_devfreq {
 	 * until the boost expires.
 	 */
 	struct dev_pm_qos_request boost_freq;
-	/**
-	 * @busy_cycles: Last busy counter value, for calculating elapsed busy
+	/** @busy_cycles: Last busy counter value, for calculating elapsed busy
 	 * cycles since last sampling period.
 	 */
 	u64 busy_cycles;
+	/** @total_busy_us: Cumulative GPU busy time in microseconds. */
+	u64 total_busy_us;
+	/** @busy_percent: Last sampled GPU busy percentage (0-100). */
+	unsigned int busy_percent;
 	/** @time: Time of last sampling period.  */
 	ktime_t time;
 	/** @idle_time: Time of last transition to idle.  */
