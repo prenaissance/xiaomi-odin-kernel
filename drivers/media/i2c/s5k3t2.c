@@ -954,6 +954,8 @@ static int s5k3t2_power_on(struct device *dev)
 	struct s5k3t2 *s5k3t2 = to_s5k3t2(sd);
 	int ret;
 
+	gpiod_set_value_cansleep(s5k3t2->reset_gpio, 1);
+
 	ret = regulator_bulk_enable(S5K3T2_NUM_SUPPLIES, s5k3t2->supplies);
 	if (ret)
 		return ret;
@@ -962,6 +964,7 @@ static int s5k3t2_power_on(struct device *dev)
 	if (ret)
 		goto disable_regulators;
 
+	usleep_range(1000, 2000);
 	gpiod_set_value_cansleep(s5k3t2->reset_gpio, 0);
 	usleep_range(10 * USEC_PER_MSEC, 15 * USEC_PER_MSEC);
 
@@ -1125,9 +1128,8 @@ static void s5k3t2_remove(struct i2c_client *client)
 	}
 }
 
-static const struct dev_pm_ops s5k3t2_pm_ops = {
-	SET_RUNTIME_PM_OPS(s5k3t2_power_off, s5k3t2_power_on, NULL)
-};
+static DEFINE_RUNTIME_DEV_PM_OPS(s5k3t2_pm_ops, s5k3t2_power_off,
+				 s5k3t2_power_on, NULL);
 
 static const struct of_device_id s5k3t2_of_match[] = {
 	{ .compatible = "samsung,s5k3t2" },
@@ -1138,7 +1140,7 @@ MODULE_DEVICE_TABLE(of, s5k3t2_of_match);
 static struct i2c_driver s5k3t2_i2c_driver = {
 	.driver = {
 		.name = "s5k3t2",
-		.pm = &s5k3t2_pm_ops,
+		.pm = pm_ptr(&s5k3t2_pm_ops),
 		.of_match_table = s5k3t2_of_match,
 	},
 	.probe = s5k3t2_probe,
