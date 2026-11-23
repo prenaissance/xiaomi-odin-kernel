@@ -884,6 +884,16 @@
 };
 
 &cci0_i2c1 {
+	clock-frequency = <400000>;
+
+	actuator_wide: lens@c {
+		compatible = "asahi-kasei,ak7377";
+		reg = <0x0c>;
+
+		vdd-supply = <&pm8008i_l4>;
+		vio-supply = <&pm8008i_l6>;
+	};
+
 	camera_wide: camera@3d {
 		compatible = "samsung,s5khmx";
 		reg = <0x3d>;
@@ -900,6 +910,9 @@
 		vddio-supply = <&pm8008i_l6>;
 		vdda-supply = <&vreg_cam_wide_vana>;
 		vddd-supply = <&pm8008i_l2>;
+
+		lens-focus = <&actuator_wide>;
+		flash-leds = <&pm8350c_flash_led>;
 
 		orientation = <1>;
 		rotation = <90>;
@@ -951,6 +964,16 @@
 };
 
 &cci1_i2c1 {
+	clock-frequency = <400000>;
+
+	actuator_tele: lens@c {
+		compatible = "dongwoon,dw9825a";
+		reg = <0x0c>;
+
+		vdd-supply = <&pm8008i_l7>;
+		vio-supply = <&pm8008i_l6>;
+	};
+
 	camera_tele: camera@20 {
 		compatible = "hynix,hi847";
 		reg = <0x20>;
@@ -967,6 +990,8 @@
 		vddio-supply = <&pm8008i_l6>;
 		vdda-supply = <&vreg_cam_tele_vana>;
 		vddd-supply = <&vreg_cam_ultra_tele_dvdd>;
+
+		lens-focus = <&actuator_tele>;
 
 		orientation = <1>;
 		rotation = <90>;
@@ -1278,7 +1303,7 @@
 &pm8350c_flash {
 	status = "okay";
 
-	led-0 {
+	pm8350c_flash_led: led-0 {
 		function = LED_FUNCTION_FLASH;
 		color = <LED_COLOR_ID_WHITE>;
 		led-sources = <1>, <2>;
