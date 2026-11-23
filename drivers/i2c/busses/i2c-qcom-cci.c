@@ -834,6 +834,9 @@ static int cci_probe(struct platform_device *pdev)
 			goto error_i2c;
 	}
 
+	pm_runtime_mark_last_busy(dev);
+	pm_runtime_idle(dev);
+
 	return 0;
 
 error_i2c:
