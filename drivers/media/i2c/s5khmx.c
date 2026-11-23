@@ -1443,6 +1443,8 @@ static int s5khmx_power_on(struct device *dev)
 	struct s5khmx *s5khmx = to_s5khmx(sd);
 	int ret;
 
+	gpiod_set_value_cansleep(s5khmx->reset_gpio, 1);
+
 	ret = regulator_bulk_enable(S5KHMX_NUM_SUPPLIES, s5khmx->supplies);
 	if (ret)
 		return ret;
@@ -1451,6 +1453,7 @@ static int s5khmx_power_on(struct device *dev)
 	if (ret)
 		goto disable_regulators;
 
+	usleep_range(1000, 2000);
 	gpiod_set_value_cansleep(s5khmx->reset_gpio, 0);
 	usleep_range(5 * USEC_PER_MSEC, 10 * USEC_PER_MSEC);
 
@@ -1614,9 +1617,8 @@ static void s5khmx_remove(struct i2c_client *client)
 	}
 }
 
-static const struct dev_pm_ops s5khmx_pm_ops = {
-	SET_RUNTIME_PM_OPS(s5khmx_power_off, s5khmx_power_on, NULL)
-};
+static DEFINE_RUNTIME_DEV_PM_OPS(s5khmx_pm_ops, s5khmx_power_off,
+				 s5khmx_power_on, NULL);
 
 static const struct of_device_id s5khmx_of_match[] = {
 	{ .compatible = "samsung,s5khmx" },
@@ -1627,7 +1629,7 @@ MODULE_DEVICE_TABLE(of, s5khmx_of_match);
 static struct i2c_driver s5khmx_i2c_driver = {
 	.driver = {
 		.name = "s5khmx",
-		.pm = &s5khmx_pm_ops,
+		.pm = pm_ptr(&s5khmx_pm_ops),
 		.of_match_table = s5khmx_of_match,
 	},
 	.probe = s5khmx_probe,
