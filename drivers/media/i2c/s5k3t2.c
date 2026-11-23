@@ -683,6 +683,7 @@ static int s5k3t2_enable_streams(struct v4l2_subdev *sd,
 
 error:
 	dev_err(s5k3t2->dev, "failed to start streaming: %d\n", ret);
+	pm_runtime_mark_last_busy(s5k3t2->dev);
 	pm_runtime_put_autosuspend(s5k3t2->dev);
 
 	return ret;
@@ -699,6 +700,7 @@ static int s5k3t2_disable_streams(struct v4l2_subdev *sd,
 	if (ret)
 		dev_err(s5k3t2->dev, "failed to stop streaming: %d\n", ret);
 
+	pm_runtime_mark_last_busy(s5k3t2->dev);
 	pm_runtime_put_autosuspend(s5k3t2->dev);
 
 	return ret;
