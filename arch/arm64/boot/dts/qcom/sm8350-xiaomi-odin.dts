@@ -1112,6 +1112,11 @@
 	};
 };
 
+&ipa {
+	firmware-name = "qcom/sm8350/xiaomi/odin/ipa_fws.mbn";
+	status = "okay";
+};
+
 &iris {
 	firmware-name = "qcom/sm8350/xiaomi/odin/vpu20_4v.mbn";
 	status = "okay";
@@ -1159,6 +1164,11 @@
 
 &mdss_dsi0_phy {
 	vdds-supply = <&pm8350_l5>;
+	status = "okay";
+};
+
+&mpss {
+	firmware-name = "qcom/sm8350/xiaomi/odin/modem.mbn";
 	status = "okay";
 };
 
