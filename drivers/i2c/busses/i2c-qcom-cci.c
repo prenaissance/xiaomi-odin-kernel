@@ -416,9 +416,9 @@ static int cci_run_queue(struct cci *cci, u8 master, u8 queue)
 
 	if (!wait_for_completion_timeout(&cci->master[master].irq_complete,
 					 CCI_TIMEOUT)) {
-		dev_err(cci->dev, "master %d queue %d timeout\n",
-			master, queue);
-		cci_reset(cci);
+		dev_err(cci->dev, "master %d queue %d timeout (status 0x%08x)\n",
+			master, queue,
+			readl(cci->base + CCI_I2C_Mm_STATUS(master)));
 		return -ETIMEDOUT;
 	}
 
@@ -537,6 +537,7 @@ static int cci_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 {
 	struct cci_master *cci_master = i2c_get_adapdata(adap);
 	struct cci *cci = cci_master->cci;
+	bool retried = false;
 	int i, ret;
 
 	ret = pm_runtime_resume_and_get(cci->dev);
@@ -561,6 +562,7 @@ static int cci_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 			goto err;
 	}
 
+retry:
 	down_read(&cci->reset_lock);
 	for (i = 0; i < num; i++) {
 		if (msgs[i].flags & I2C_M_RD)
@@ -576,6 +578,19 @@ static int cci_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 			break;
 	}
 	up_read(&cci->reset_lock);
+
+	if (ret == -ETIMEDOUT) {
+		int reset_ret;
+
+		down_write(&cci->reset_lock);
+		reset_ret = cci_reset(cci);
+		up_write(&cci->reset_lock);
+
+		if (!reset_ret && !retried && i == 0) {
+			retried = true;
+			goto retry;
+		}
+	}
 
 	if (!ret)
 		ret = num;
