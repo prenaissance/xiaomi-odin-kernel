@@ -257,7 +257,7 @@ static void ak7375_remove(struct i2c_client *client)
  * The lens position is gradually moved in units of ctrl_steps,
  * to make the movements smoothly.
  */
-static int __maybe_unused ak7375_vcm_suspend(struct device *dev)
+static int ak7375_vcm_suspend(struct device *dev)
 {
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct ak7375_device *ak7375_dev = sd_to_ak7375_vcm(sd);
@@ -300,7 +300,7 @@ static int __maybe_unused ak7375_vcm_suspend(struct device *dev)
  * The lens position is gradually moved in units of ctrl_steps,
  * to make the movements smoothly.
  */
-static int __maybe_unused ak7375_vcm_resume(struct device *dev)
+static int ak7375_vcm_resume(struct device *dev)
 {
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct ak7375_device *ak7375_dev = sd_to_ak7375_vcm(sd);
@@ -354,15 +354,13 @@ static const struct of_device_id ak7375_of_table[] = {
 };
 MODULE_DEVICE_TABLE(of, ak7375_of_table);
 
-static const struct dev_pm_ops ak7375_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(ak7375_vcm_suspend, ak7375_vcm_resume)
-	SET_RUNTIME_PM_OPS(ak7375_vcm_suspend, ak7375_vcm_resume, NULL)
-};
+static DEFINE_RUNTIME_DEV_PM_OPS(ak7375_pm_ops, ak7375_vcm_suspend,
+				 ak7375_vcm_resume, NULL);
 
 static struct i2c_driver ak7375_i2c_driver = {
 	.driver = {
 		.name = "ak7375",
-		.pm = &ak7375_pm_ops,
+		.pm = pm_ptr(&ak7375_pm_ops),
 		.of_match_table = ak7375_of_table,
 	},
 	.probe = ak7375_probe,
