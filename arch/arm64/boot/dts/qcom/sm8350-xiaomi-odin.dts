@@ -119,6 +119,7 @@
 		off-on-delay-us = <20000>;
 		enable-active-high;
 		gpio = <&tlmm 93 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vreg_bob>;
 	};
 
 	vreg_cam_ultra_vana: regulator-cam-ultra-vana {
@@ -130,6 +131,7 @@
 		off-on-delay-us = <20000>;
 		enable-active-high;
 		gpio = <&tlmm 66 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vreg_bob>;
 	};
 
 	vreg_cam_tele_vana: regulator-cam-tele-vana {
@@ -141,6 +143,7 @@
 		off-on-delay-us = <20000>;
 		enable-active-high;
 		gpio = <&tlmm 34 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&vreg_bob>;
 	};
 
 	vreg_cam_ultra_tele_dvdd: regulator-cam-ultra-tele-dvdd {
@@ -797,6 +800,14 @@
 	status = "okay";
 
 	ports {
+		port@1 {
+			csiphy1_ep: endpoint {
+				data-lanes = <0 1 2>;
+				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
+				remote-endpoint = <&s5khmx_wide_ep>;
+			};
+		};
+
 		port@3 {
 			csiphy3_ep: endpoint {
 				clock-lanes = <7>;
@@ -831,6 +842,8 @@
 };
 
 &cci0_i2c0 {
+	clock-frequency = <400000>;
+
 	camera_front: camera@10 {
 		compatible = "samsung,s5k3t2";
 		reg = <0x10>;
@@ -842,6 +855,7 @@
 		clocks = <&camcc CAM_CC_MCLK1_CLK>;
 		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
 		assigned-clock-rates = <19200000>;
+		power-domains = <&camcc TITAN_TOP_GDSC>;
 
 		vddio-supply = <&pm8008i_l6>;
 		vdda-supply = <&vreg_cam_front_vana>;
@@ -855,6 +869,38 @@
 				data-lanes = <1 2 3 4>;
 				link-frequencies = /bits/ 64 <310400000>;
 				remote-endpoint = <&csiphy5_ep>;
+			};
+		};
+	};
+};
+
+&cci0_i2c1 {
+	camera_wide: camera@3d {
+		compatible = "samsung,s5khmx";
+		reg = <0x3d>;
+
+		reset-gpios = <&tlmm 16 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk3_default>, <&cam_wide_reset_default>;
+
+		clocks = <&camcc CAM_CC_MCLK3_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK3_CLK>;
+		assigned-clock-rates = <19200000>;
+		power-domains = <&camcc TITAN_TOP_GDSC>;
+
+		vddio-supply = <&pm8008i_l6>;
+		vdda-supply = <&vreg_cam_wide_vana>;
+		vddd-supply = <&pm8008i_l2>;
+
+		orientation = <1>;
+		rotation = <90>;
+
+		port {
+			s5khmx_wide_ep: endpoint {
+				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
+				data-lanes = <0 1 2>;
+				link-frequencies = /bits/ 64 <601600000 1798400000>;
+				remote-endpoint = <&csiphy1_ep>;
 			};
 		};
 	};
@@ -876,6 +922,7 @@
 		clocks = <&camcc CAM_CC_MCLK2_CLK>;
 		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
 		assigned-clock-rates = <19200000>;
+		power-domains = <&camcc TITAN_TOP_GDSC>;
 
 		dovdd-supply = <&pm8008i_l6>;
 		avdd-supply = <&vreg_cam_ultra_vana>;
@@ -906,6 +953,7 @@
 		clocks = <&camcc CAM_CC_MCLK0_CLK>;
 		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
 		assigned-clock-rates = <19200000>;
+		power-domains = <&camcc TITAN_TOP_GDSC>;
 
 		vddio-supply = <&pm8008i_l6>;
 		vdda-supply = <&vreg_cam_tele_vana>;
@@ -1056,8 +1104,8 @@
 
 			pm8008i_l2: ldo2 {
 				regulator-name = "pm8008i_l2";
-				regulator-min-microvolt = <944000>;
-				regulator-max-microvolt = <1152000>;
+				regulator-min-microvolt = <1104000>;
+				regulator-max-microvolt = <1104000>;
 			};
 
 			pm8008i_l3: ldo3 {
@@ -1595,6 +1643,13 @@
 
 	pm8008i_reset_default: pm8008i-reset-default-state {
 		pins = "gpio33";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	cam_wide_reset_default: cam-wide-reset-default-state {
+		pins = "gpio16";
 		function = "gpio";
 		drive-strength = <2>;
 		bias-disable;
