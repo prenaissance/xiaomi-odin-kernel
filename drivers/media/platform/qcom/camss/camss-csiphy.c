@@ -155,7 +155,10 @@ static int csiphy_set_clock_rates_legacy(struct csiphy_device *csiphy)
 		struct camss_clock *clock = &csiphy->clock[i];
 
 		if (csiphy->rate_set[i]) {
-			u64 min_rate = link_freq / 4;
+			u64 min_rate = csiphy->cfg.csi2->lane_cfg.bus_type ==
+				       V4L2_MBUS_CSI2_CPHY ?
+				       div_u64(link_freq, 7) :
+				       div_u64(link_freq, 4);
 			long round_rate;
 
 			camss_add_clock_margin(&min_rate);
@@ -470,8 +473,8 @@ static void csiphy_try_format(struct csiphy_device *csiphy,
 		if (i >= csiphy->res->formats->nformats)
 			fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
 
-		fmt->width = clamp_t(u32, fmt->width, 1, 8191);
-		fmt->height = clamp_t(u32, fmt->height, 1, 8191);
+		fmt->width = clamp_t(u32, fmt->width, 1, 16383);
+		fmt->height = clamp_t(u32, fmt->height, 1, 16383);
 
 		fmt->field = V4L2_FIELD_NONE;
 		fmt->colorspace = V4L2_COLORSPACE_SRGB;

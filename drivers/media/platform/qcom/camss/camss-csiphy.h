@@ -22,6 +22,7 @@
 #define MSM_CSIPHY_PAD_SRC 1
 #define MSM_CSIPHY_PADS_NUM 2
 #define MSM_CSIPHY_MAX_DATA_LANE 4
+#define MSM_CSIPHY_MAX_CPHY_LANE 3
 
 #define CSIPHY_GRP_ID 1
 
@@ -32,11 +33,13 @@ struct csiphy_lane {
 
 /**
  * struct csiphy_lanes_cfg - CSIPHY lanes configuration
- * @num_data: number of data lanes
+ * @bus_type: MIPI CSI-2 bus type (D-PHY or C-PHY)
+ * @num_data: number of data lanes (or C-PHY trios)
  * @data:     data lanes configuration
  * @clk:      clock lane configuration (only for D-PHY)
  */
 struct csiphy_lanes_cfg {
+	enum v4l2_mbus_type bus_type;
 	int num_data;
 	struct csiphy_lane *data;
 	struct csiphy_lane clk;
@@ -93,6 +96,8 @@ struct csiphy_subdev_resources {
 struct csiphy_device_regs {
 	const struct csiphy_lane_regs *lane_regs;
 	int lane_array_size;
+	const struct csiphy_lane_regs *cphy_lane_regs;
+	int cphy_lane_array_size;
 	u32 offset;
 	u32 common_status_offset;
 };

@@ -916,6 +916,7 @@ static int vfe_match_clock_names(struct vfe_device *vfe,
 		!strcmp(clock->name, vfe_lite_name) ||
 		!strcmp(clock->name, "vfe_lite") ||
 		!strcmp(clock->name, "camnoc_axi") ||
+		!strcmp(clock->name, "camnoc_axi_src") ||
 		!strcmp(clock->name, "camnoc_rt_axi"));
 }
 
@@ -1348,8 +1349,8 @@ static void vfe_try_format(struct vfe_line *line,
 		if (i >= line->nformats)
 			fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
 
-		fmt->width = clamp_t(u32, fmt->width, 1, 8191);
-		fmt->height = clamp_t(u32, fmt->height, 1, 8191);
+		fmt->width = clamp_t(u32, fmt->width, 1, 16383);
+		fmt->height = clamp_t(u32, fmt->height, 1, 16383);
 
 		fmt->field = V4L2_FIELD_NONE;
 		fmt->colorspace = V4L2_COLORSPACE_SRGB;

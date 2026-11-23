@@ -19,9 +19,9 @@
 #include "camss.h"
 
 #define CAMSS_FRAME_MIN_WIDTH		1
-#define CAMSS_FRAME_MAX_WIDTH		8191
+#define CAMSS_FRAME_MAX_WIDTH		16383
 #define CAMSS_FRAME_MIN_HEIGHT		1
-#define CAMSS_FRAME_MAX_HEIGHT_RDI	8191
+#define CAMSS_FRAME_MAX_HEIGHT_RDI	16383
 #define CAMSS_FRAME_MAX_HEIGHT_PIX	4096
 
 /* -----------------------------------------------------------------------------

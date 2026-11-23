@@ -4911,11 +4911,8 @@ static int camss_parse_endpoint_node(struct device *dev,
 	if (ret)
 		return ret;
 
-	/*
-	 * Most SoCs support both D-PHY and C-PHY standards, but currently only
-	 * D-PHY is supported in the driver.
-	 */
-	if (vep.bus_type != V4L2_MBUS_CSI2_DPHY) {
+	if (vep.bus_type != V4L2_MBUS_CSI2_DPHY &&
+	    vep.bus_type != V4L2_MBUS_CSI2_CPHY) {
 		dev_err(dev, "Unsupported bus type %d\n", vep.bus_type);
 		return -EINVAL;
 	}
@@ -4923,24 +4920,36 @@ static int camss_parse_endpoint_node(struct device *dev,
 	csd->interface.csiphy_id = vep.base.port;
 
 	mipi_csi2 = &vep.bus.mipi_csi2;
-	lncfg->clk.pos = mipi_csi2->clock_lane;
-	lncfg->clk.pol = mipi_csi2->lane_polarities[0];
+	lncfg->bus_type = vep.bus_type;
 	lncfg->num_data = mipi_csi2->num_data_lanes;
+
+	if (vep.bus_type == V4L2_MBUS_CSI2_DPHY) {
+		lncfg->clk.pos = mipi_csi2->clock_lane;
+		lncfg->clk.pol = mipi_csi2->lane_polarities[0];
+	} else {
+		lncfg->clk.pos = 0;
+		lncfg->clk.pol = 0;
+	}
 
 	lncfg->data = devm_kzalloc_objs(dev, *lncfg->data, lncfg->num_data);
 	if (!lncfg->data)
 		return -ENOMEM;
 
 	for (i = 0; i < lncfg->num_data; i++) {
+		u8 max_lanes = vep.bus_type == V4L2_MBUS_CSI2_CPHY ?
+			       MSM_CSIPHY_MAX_CPHY_LANE :
+			       MSM_CSIPHY_MAX_DATA_LANE;
 		u8 lane = mipi_csi2->data_lanes[i];
 
-		if (lane < lane_base || lane - lane_base >= MSM_CSIPHY_MAX_DATA_LANE) {
+		if (lane < lane_base || lane - lane_base >= max_lanes) {
 			dev_err(dev, "invalid data-lane %u\n", lane);
 			return -EINVAL;
 		}
 
-		lncfg->data[i].pos = mipi_csi2->data_lanes[i] - lane_base;
-		lncfg->data[i].pol = mipi_csi2->lane_polarities[i + 1];
+		lncfg->data[i].pos = lane - lane_base;
+		lncfg->data[i].pol = vep.bus_type == V4L2_MBUS_CSI2_CPHY ?
+				     mipi_csi2->lane_polarities[i] :
+				     mipi_csi2->lane_polarities[i + 1];
 	}
 
 	return 0;
