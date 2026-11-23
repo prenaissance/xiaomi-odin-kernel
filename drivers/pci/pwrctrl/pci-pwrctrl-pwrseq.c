@@ -15,6 +15,7 @@
 struct pwrseq_pwrctrl {
 	struct pci_pwrctrl pwrctrl;
 	struct pwrseq_desc *pwrseq;
+	bool keep_powered;
 };
 
 struct pwrseq_pwrctrl_pdata {
@@ -24,6 +25,7 @@ struct pwrseq_pwrctrl_pdata {
 	 * verification between requesting the power sequencing handle.
 	 */
 	int (*validate_device)(struct device *dev);
+	bool keep_powered;
 };
 
 static int pwrseq_pwrctrl_qcm_wcn_validate_device(struct device *dev)
@@ -51,6 +53,18 @@ static const struct pwrseq_pwrctrl_pdata pwrseq_pwrctrl_qcom_wcn_pdata = {
 	.validate_device = pwrseq_pwrctrl_qcm_wcn_validate_device,
 };
 
+/*
+ * On WCN6855 combo Wi-Fi/BT chips, deasserting WLAN_EN during system suspend
+ * while Bluetooth shares the PMU triggers a platform reset on SM8350/WCN6855
+ * hw1.1; keep the pwrseq target enabled across suspend (PERST# and PCIe RC/PHY
+ * power-down still proceed) and release it on unbind via devm_pwrseq_put().
+ */
+static const struct pwrseq_pwrctrl_pdata pwrseq_pwrctrl_qcom_wcn6855_pdata = {
+	.target = "wlan",
+	.validate_device = pwrseq_pwrctrl_qcm_wcn_validate_device,
+	.keep_powered = true,
+};
+
 static int pwrseq_pwrctrl_power_on(struct pci_pwrctrl *pwrctrl)
 {
 	struct pwrseq_pwrctrl *pwrseq = container_of(pwrctrl,
@@ -63,6 +77,9 @@ static int pwrseq_pwrctrl_power_off(struct pci_pwrctrl *pwrctrl)
 {
 	struct pwrseq_pwrctrl *pwrseq = container_of(pwrctrl,
 					   struct pwrseq_pwrctrl, pwrctrl);
+
+	if (pwrseq->keep_powered)
+		return 0;
 
 	return pwrseq_disable(pwrseq->pwrseq);
 }
@@ -93,6 +110,7 @@ static int pwrseq_pwrctrl_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, PTR_ERR(pwrseq->pwrseq),
 				     "Failed to get the power sequencer\n");
 
+	pwrseq->keep_powered = pdata->keep_powered;
 	pwrseq->pwrctrl.power_on = pwrseq_pwrctrl_power_on;
 	pwrseq->pwrctrl.power_off = pwrseq_pwrctrl_power_off;
 
@@ -115,7 +133,7 @@ static const struct of_device_id pwrseq_pwrctrl_of_match[] = {
 	{
 		/* ATH11K in WCN6855 package. */
 		.compatible = "pci17cb,1103",
-		.data = &pwrseq_pwrctrl_qcom_wcn_pdata,
+		.data = &pwrseq_pwrctrl_qcom_wcn6855_pdata,
 	},
 	{
 		/* ATH12K in WCN7850 package. */
