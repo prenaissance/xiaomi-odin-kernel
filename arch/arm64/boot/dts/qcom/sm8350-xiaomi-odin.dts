@@ -805,6 +805,15 @@
 				remote-endpoint = <&ov13b10_ultra_ep>;
 			};
 		};
+
+		port@4 {
+			csiphy4_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1>;
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				remote-endpoint = <&hi847_tele_ep>;
+			};
+		};
 	};
 };
 
@@ -841,6 +850,36 @@
 				data-lanes = <1 2 3 4>;
 				link-frequencies = /bits/ 64 <560000000>;
 				remote-endpoint = <&csiphy3_ep>;
+			};
+		};
+	};
+};
+
+&cci1_i2c1 {
+	camera_tele: camera@20 {
+		compatible = "hynix,hi847";
+		reg = <0x20>;
+
+		reset-gpios = <&tlmm 106 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk0_default>, <&cam_tele_reset_default>;
+
+		clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clock-rates = <19200000>;
+
+		vddio-supply = <&pm8008i_l6>;
+		vdda-supply = <&vreg_cam_tele_vana>;
+		vddd-supply = <&vreg_cam_ultra_tele_dvdd>;
+
+		orientation = <1>;
+		rotation = <90>;
+
+		port {
+			hi847_tele_ep: endpoint {
+				data-lanes = <1 2>;
+				link-frequencies = /bits/ 64 <840000000 400000000>;
+				remote-endpoint = <&csiphy4_ep>;
 			};
 		};
 	};
@@ -1507,6 +1546,13 @@
 
 	pm8008i_reset_default: pm8008i-reset-default-state {
 		pins = "gpio33";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	cam_tele_reset_default: cam-tele-reset-default-state {
+		pins = "gpio106";
 		function = "gpio";
 		drive-strength = <2>;
 		bias-disable;
