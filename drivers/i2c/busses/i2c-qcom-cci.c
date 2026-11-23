@@ -12,6 +12,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/pm_opp.h>
+#include <linux/rwsem.h>
 
 #define CCI_HW_VERSION				0x0
 #define CCI_RESET_CMD				0x004
@@ -29,6 +30,18 @@
 #define CCI_I2C_Mm_SDA_CTL_2(m)			(0x10c + 0x100 * (m))
 #define CCI_I2C_Mm_MISC_CTL(m)			(0x110 + 0x100 * (m))
 #define CCI_I2C_MISC_CTL_SCL_STRETCH_EN	BIT(8)
+#define CCI_I2C_Mm_STATUS(m)			(0x114 + 0x100 * (m))
+#define CCI_I2C_STATUS_SDA			BIT(14)
+#define CCI_I2C_STATUS_SCL			BIT(15)
+#define CCI_I2C_STATUS_BUS_IDLE			BIT(16)
+#define CCI_I2C_STATUS_BUS_BUSY			BIT(17)
+#define CCI_I2C_STATUS_BUS_STATE_MASK		(CCI_I2C_STATUS_SDA | \
+						 CCI_I2C_STATUS_SCL | \
+						 CCI_I2C_STATUS_BUS_IDLE | \
+						 CCI_I2C_STATUS_BUS_BUSY)
+#define CCI_I2C_STATUS_STALE_BUSY		(CCI_I2C_STATUS_SDA | \
+						 CCI_I2C_STATUS_SCL | \
+						 CCI_I2C_STATUS_BUS_BUSY)
 
 #define CCI_I2C_Mm_READ_DATA(m)			(0x118 + 0x100 * (m))
 #define CCI_I2C_Mm_READ_BUF_LEVEL(m)		(0x11c + 0x100 * (m))
@@ -137,6 +150,7 @@ struct cci {
 	struct clk_bulk_data *clocks;
 	int nclocks;
 	struct clk *cci_clk;
+	struct rw_semaphore reset_lock;
 	struct cci_master master[NUM_MASTERS];
 };
 
@@ -376,6 +390,7 @@ static int cci_reset(struct cci *cci)
 	 * we reset the whole controller, here and for implicity use
 	 * master[0].xxx for waiting on it.
 	 */
+	writel(CCI_IRQ_MASK_0_RST_DONE_ACK, cci->base + CCI_IRQ_MASK_0);
 	reinit_completion(&cci->master[0].irq_complete);
 	writel(CCI_RESET_CMD_MASK, cci->base + CCI_RESET_CMD);
 
@@ -524,10 +539,29 @@ static int cci_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	struct cci *cci = cci_master->cci;
 	int i, ret;
 
-	ret = pm_runtime_get_sync(cci->dev);
+	ret = pm_runtime_resume_and_get(cci->dev);
 	if (ret < 0)
-		goto err;
+		return ret;
 
+	/*
+	 * If a target powered down its shared I2C pull-up while the CCI
+	 * controller remained active, the master bus state machine can stay
+	 * latched in BUS_BUSY even after SDA and SCL return high. Reset the
+	 * controller before starting the transfer so the queue does not stall.
+	 */
+	if (cci->data->max_mode == I2C_MODE_FAST_PLUS &&
+	    (readl(cci->base + CCI_I2C_Mm_STATUS(cci_master->master)) &
+	     CCI_I2C_STATUS_BUS_STATE_MASK) == CCI_I2C_STATUS_STALE_BUSY) {
+		down_write(&cci->reset_lock);
+		if ((readl(cci->base + CCI_I2C_Mm_STATUS(cci_master->master)) &
+		     CCI_I2C_STATUS_BUS_STATE_MASK) == CCI_I2C_STATUS_STALE_BUSY)
+			ret = cci_reset(cci);
+		up_write(&cci->reset_lock);
+		if (ret < 0)
+			goto err;
+	}
+
+	down_read(&cci->reset_lock);
 	for (i = 0; i < num; i++) {
 		if (msgs[i].flags & I2C_M_RD)
 			ret = cci_i2c_read(cci, cci_master->master,
@@ -541,11 +575,13 @@ static int cci_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 		if (ret < 0)
 			break;
 	}
+	up_read(&cci->reset_lock);
 
 	if (!ret)
 		ret = num;
 
 err:
+	pm_runtime_mark_last_busy(cci->dev);
 	pm_runtime_put_autosuspend(cci->dev);
 
 	return ret;
@@ -651,7 +687,7 @@ static int __maybe_unused cci_resume_runtime(struct device *dev)
 	if (ret)
 		return ret;
 
-	return cci_init(cci);
+	return cci_reset(cci);
 }
 
 static const struct dev_pm_ops qcom_cci_pm = {
@@ -677,6 +713,7 @@ static int cci_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	cci->dev = dev;
+	init_rwsem(&cci->reset_lock);
 	platform_set_drvdata(pdev, cci);
 	cci->data = device_get_match_data(dev);
 	if (!cci->data)
@@ -781,7 +818,7 @@ static int cci_probe(struct platform_device *pdev)
 	if (ret < 0)
 		goto disable_clocks;
 
-	pm_runtime_set_autosuspend_delay(dev, MSEC_PER_SEC);
+	pm_runtime_set_autosuspend_delay(dev, 50);
 	ret = devm_pm_runtime_set_active_enabled(dev);
 	if (ret)
 		goto disable_clocks;
