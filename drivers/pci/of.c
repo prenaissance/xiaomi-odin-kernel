@@ -628,7 +628,7 @@ static void pci_configure_wake_irq(struct pci_dev *pdev, struct gpio_desc *wake)
 		return;
 	}
 
-	device_init_wakeup(&pdev->dev, true);
+	device_set_wakeup_capable(&pdev->dev, true);
 }
 
 void pci_configure_of_wake_gpio(struct pci_dev *dev)
