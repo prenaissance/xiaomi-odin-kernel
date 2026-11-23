@@ -273,8 +273,8 @@ static int iris_hfi_gen1_session_continue(struct iris_inst *inst, u32 plane)
 
 static int iris_hfi_gen1_queue_input_buffer(struct iris_inst *inst, struct iris_buffer *buf)
 {
-	struct hfi_session_empty_buffer_compressed_pkt com_ip_pkt;
-	struct hfi_session_empty_buffer_uncompressed_pkt uncom_ip_pkt;
+	struct hfi_session_empty_buffer_compressed_pkt com_ip_pkt = {};
+	struct hfi_session_empty_buffer_uncompressed_pkt uncom_ip_pkt = {};
 
 	if (inst->domain == DECODER) {
 		com_ip_pkt.shdr.hdr.size = sizeof(struct hfi_session_empty_buffer_compressed_pkt);
