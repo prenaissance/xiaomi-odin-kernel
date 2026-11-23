@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/media/i2c/dongwoon,dw9825.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Dongwoon Anatech DW9825A voice coil lens actuator
+
+maintainers:
+  - Linux Media Mailing List <linux-media@vger.kernel.org>
+
+description:
+  DW9825A is a closed-loop Hall-effect voice coil motor (VCM) camera lens
+  actuator controlled over I2C.
+
+properties:
+  compatible:
+    enum:
+      - dongwoon,dw9825a
+
+  reg:
+    maxItems: 1
+
+  vdd-supply:
+    description: VDD supply
+
+  vio-supply:
+    description: I/O pull-up supply
+
+required:
+  - compatible
+  - reg
+  - vdd-supply
+  - vio-supply
+
+additionalProperties: false
+
+examples:
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        dw9825a: lens@c {
+            compatible = "dongwoon,dw9825a";
+            reg = <0x0c>;
+
+            vdd-supply = <&pm8008i_l7>;
+            vio-supply = <&pm8008i_l6>;
+        };
+    };
+
+...

@@ -1022,6 +1022,15 @@ config VIDEO_DW9807_VCM
 	  capability. This is designed for linear control of
 	  voice coil motors, controlled via I2C serial interface.
 
+config VIDEO_DW9825
+	tristate "DW9825A lens voice coil support"
+	select V4L2_CCI_I2C
+	help
+	  This is a driver for the Dongwoon DW9825A closed-loop camera
+	  lens voice coil actuator, controlled via I2C serial interface.
+	  DW9825A provides 12-bit closed-loop Hall-effect lens position
+	  control for camera autofocus.
+
 endif
 
 menu "Flash devices"
