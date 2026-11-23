@@ -814,11 +814,50 @@
 				remote-endpoint = <&hi847_tele_ep>;
 			};
 		};
+
+		port@5 {
+			csiphy5_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
+				remote-endpoint = <&s5k3t2_front_ep>;
+			};
+		};
 	};
 };
 
 &cci0 {
 	status = "okay";
+};
+
+&cci0_i2c0 {
+	camera_front: camera@10 {
+		compatible = "samsung,s5k3t2";
+		reg = <0x10>;
+
+		reset-gpios = <&tlmm 17 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk1_default>, <&cam_front_reset_default>;
+
+		clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clock-rates = <19200000>;
+
+		vddio-supply = <&pm8008i_l6>;
+		vdda-supply = <&vreg_cam_front_vana>;
+		vddd-supply = <&pm8008i_l1>;
+
+		orientation = <0>;
+		rotation = <270>;
+
+		port {
+			s5k3t2_front_ep: endpoint {
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <310400000>;
+				remote-endpoint = <&csiphy5_ep>;
+			};
+		};
+	};
 };
 
 &cci1 {
@@ -1011,8 +1050,8 @@
 		regulators {
 			pm8008i_l1: ldo1 {
 				regulator-name = "pm8008i_l1";
-				regulator-min-microvolt = <1000000>;
-				regulator-max-microvolt = <1104000>;
+				regulator-min-microvolt = <1056000>;
+				regulator-max-microvolt = <1056000>;
 			};
 
 			pm8008i_l2: ldo2 {
@@ -1546,6 +1585,13 @@
 
 	pm8008i_reset_default: pm8008i-reset-default-state {
 		pins = "gpio33";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	cam_front_reset_default: cam-front-reset-default-state {
+		pins = "gpio17";
 		function = "gpio";
 		drive-strength = <2>;
 		bias-disable;
