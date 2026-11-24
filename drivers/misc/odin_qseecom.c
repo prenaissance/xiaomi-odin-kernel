@@ -13,6 +13,7 @@
 #include <linux/firmware/qcom/qcom_scm.h>
 #include <linux/firmware/qcom/qcom_tzmem.h>
 #include <linux/fs.h>
+#include <linux/kref.h>
 #include <linux/list.h>
 #include <linux/miscdevice.h>
 #include <linux/mm.h>
@@ -89,6 +90,8 @@ struct odin_shm_buf {
 
 struct odin_listener {
 	struct list_head list;
+	struct kref refcount;
+	struct odin_qseecom_ctx *ctx;
 	u32 id;
 	struct odin_shm_buf sb;
 	wait_queue_head_t req_wq;
@@ -164,6 +167,61 @@ static struct odin_listener *odin_find_listener(struct odin_qseecom_ctx *ctx,
 	return NULL;
 }
 
+static void odin_listener_release(struct kref *kref)
+{
+	struct odin_listener *lsnr =
+		container_of(kref, struct odin_listener, refcount);
+	struct odin_qseecom_ctx *ctx = lsnr->ctx;
+	u64 args[10] = { 0 };
+	u64 result = 0, resp_type = 0, data = 0;
+
+	args[0] = lsnr->id;
+	qcom_scm_qseecom_raw_call(ODIN_TZ_OWNER_QSEE_OS,
+				  ODIN_TZ_SVC_LISTENER,
+				  ODIN_TZ_CMD_DEREG_LISTENER,
+				  ODIN_SCM_ARGS1(ODIN_SCM_VAL),
+				  args, &result, &resp_type, &data);
+
+	odin_shm_free(ctx->dev, &lsnr->sb);
+	kfree(lsnr);
+}
+
+static struct odin_listener *odin_get_priv_listener(struct odin_file_priv *priv)
+{
+	struct odin_qseecom_ctx *ctx = priv->ctx;
+	struct odin_listener *lsnr;
+
+	mutex_lock(&ctx->listener_lock);
+	lsnr = priv->listener;
+	if (lsnr)
+		kref_get(&lsnr->refcount);
+	mutex_unlock(&ctx->listener_lock);
+
+	return lsnr;
+}
+
+static int odin_detach_priv_listener(struct odin_file_priv *priv)
+{
+	struct odin_qseecom_ctx *ctx = priv->ctx;
+	struct odin_listener *lsnr;
+
+	mutex_lock(&ctx->listener_lock);
+	lsnr = priv->listener;
+	if (!lsnr) {
+		mutex_unlock(&ctx->listener_lock);
+		return -EINVAL;
+	}
+	priv->listener = NULL;
+	lsnr->exiting = true;
+	list_del_init(&lsnr->list);
+	complete_all(&lsnr->resp_done);
+	wake_up_all(&lsnr->req_wq);
+	mutex_unlock(&ctx->listener_lock);
+
+	kref_put(&lsnr->refcount, odin_listener_release);
+	return 0;
+}
+
 static int odin_run_scm_with_listeners(struct odin_qseecom_ctx *ctx,
 				       u32 owner, u32 svc, u32 cmd,
 				       u32 arginfo, const u64 args[10],
@@ -191,6 +249,7 @@ static int odin_run_scm_with_listeners(struct odin_qseecom_ctx *ctx,
 		mutex_lock(&ctx->listener_lock);
 		lsnr = odin_find_listener(ctx, lid);
 		if (lsnr && !lsnr->exiting) {
+			kref_get(&lsnr->refcount);
 			reinit_completion(&lsnr->resp_done);
 			lsnr->req_pending = true;
 			wake_up_interruptible(&lsnr->req_wq);
@@ -206,6 +265,7 @@ static int odin_run_scm_with_listeners(struct odin_qseecom_ctx *ctx,
 					lid, wret);
 				*blocked_lsnr_id = lid;
 			}
+			kref_put(&lsnr->refcount, odin_listener_release);
 		} else {
 			mutex_unlock(&ctx->listener_lock);
 			dev_warn(ctx->dev,
@@ -523,31 +583,6 @@ out_free:
 	return 0;
 }
 
-static int odin_unregister_listener_obj(struct odin_qseecom_ctx *ctx,
-					struct odin_listener *lsnr)
-{
-	u64 args[10] = { 0 };
-	u64 result = 0, resp_type = 0, data = 0;
-
-	mutex_lock(&ctx->listener_lock);
-	lsnr->exiting = true;
-	list_del(&lsnr->list);
-	complete_all(&lsnr->resp_done);
-	wake_up_all(&lsnr->req_wq);
-	mutex_unlock(&ctx->listener_lock);
-
-	args[0] = lsnr->id;
-	qcom_scm_qseecom_raw_call(ODIN_TZ_OWNER_QSEE_OS,
-				  ODIN_TZ_SVC_LISTENER,
-				  ODIN_TZ_CMD_DEREG_LISTENER,
-				  ODIN_SCM_ARGS1(ODIN_SCM_VAL),
-				  args, &result, &resp_type, &data);
-
-	odin_shm_free(ctx->dev, &lsnr->sb);
-	kfree(lsnr);
-	return 0;
-}
-
 static int odin_ioc_reg_listener(struct odin_file_priv *priv, void __user *argp)
 {
 	struct odin_qseecom_ctx *ctx = priv->ctx;
@@ -557,8 +592,12 @@ static int odin_ioc_reg_listener(struct odin_file_priv *priv, void __user *argp)
 	u64 result = 0, resp_type = 0, data = 0;
 	int ret;
 
-	if (priv->listener)
+	mutex_lock(&ctx->listener_lock);
+	if (priv->listener) {
+		mutex_unlock(&ctx->listener_lock);
 		return -EBUSY;
+	}
+	mutex_unlock(&ctx->listener_lock);
 
 	if (copy_from_user(&req, argp, sizeof(req)))
 		return -EFAULT;
@@ -571,6 +610,9 @@ static int odin_ioc_reg_listener(struct odin_file_priv *priv, void __user *argp)
 	if (!lsnr)
 		return -ENOMEM;
 
+	INIT_LIST_HEAD(&lsnr->list);
+	kref_init(&lsnr->refcount);
+	lsnr->ctx = ctx;
 	lsnr->id = req.listener_id;
 	init_waitqueue_head(&lsnr->req_wq);
 	init_completion(&lsnr->resp_done);
@@ -607,9 +649,14 @@ static int odin_ioc_reg_listener(struct odin_file_priv *priv, void __user *argp)
 	}
 
 	mutex_lock(&ctx->listener_lock);
+	if (priv->listener) {
+		mutex_unlock(&ctx->listener_lock);
+		kref_put(&lsnr->refcount, odin_listener_release);
+		return -EBUSY;
+	}
 	list_add_tail(&lsnr->list, &ctx->listeners);
-	mutex_unlock(&ctx->listener_lock);
 	priv->listener = lsnr;
+	mutex_unlock(&ctx->listener_lock);
 
 	req.sb_len = lsnr->sb.size;
 	req.qsee_result = (u32)result;
@@ -627,7 +674,9 @@ static long odin_qseecom_ioctl(struct file *filp, unsigned int cmd,
 	struct odin_file_priv *priv = filp->private_data;
 	struct odin_qseecom_ctx *ctx = priv->ctx;
 	struct odin_qseecom_listener_req lreq;
+	struct odin_listener *lsnr;
 	void __user *argp = (void __user *)arg;
+	long ret;
 
 	switch (cmd) {
 	case ODIN_QSEECOM_IOC_LOOKUP:
@@ -641,49 +690,62 @@ static long odin_qseecom_ioctl(struct file *filp, unsigned int cmd,
 	case ODIN_QSEECOM_IOC_REG_LISTENER:
 		return odin_ioc_reg_listener(priv, argp);
 	case ODIN_QSEECOM_IOC_UNREG_LISTENER:
-		if (!priv->listener)
-			return -EINVAL;
-		odin_unregister_listener_obj(ctx, priv->listener);
-		priv->listener = NULL;
-		return 0;
+		return odin_detach_priv_listener(priv);
 	case ODIN_QSEECOM_IOC_WAIT_LISTENER:
-		if (!priv->listener)
+		lsnr = odin_get_priv_listener(priv);
+		if (!lsnr)
 			return -EINVAL;
-		if (wait_event_interruptible(priv->listener->req_wq,
-					     priv->listener->req_pending ||
-					     priv->listener->exiting))
+		if (wait_event_interruptible(lsnr->req_wq,
+					     lsnr->req_pending ||
+					     lsnr->exiting)) {
+			kref_put(&lsnr->refcount, odin_listener_release);
 			return -ERESTARTSYS;
-		if (priv->listener->exiting)
+		}
+		if (lsnr->exiting) {
+			kref_put(&lsnr->refcount, odin_listener_release);
 			return -ENODEV;
-		priv->listener->req_pending = false;
+		}
+		lsnr->req_pending = false;
+		kref_put(&lsnr->refcount, odin_listener_release);
 		return 0;
 	case ODIN_QSEECOM_IOC_RESP_LISTENER:
-		if (!priv->listener)
+		lsnr = odin_get_priv_listener(priv);
+		if (!lsnr)
 			return -EINVAL;
-		if (copy_from_user(&lreq, argp, sizeof(lreq)))
+		if (copy_from_user(&lreq, argp, sizeof(lreq))) {
+			kref_put(&lsnr->refcount, odin_listener_release);
 			return -EFAULT;
-		priv->listener->resp_status = lreq.status;
-		complete(&priv->listener->resp_done);
+		}
+		lsnr->resp_status = lreq.status;
+		complete(&lsnr->resp_done);
+		kref_put(&lsnr->refcount, odin_listener_release);
 		return 0;
 	default:
-		return -ENOTTY;
+		ret = -ENOTTY;
+		return ret;
 	}
 }
 
 static int odin_qseecom_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	struct odin_file_priv *priv = filp->private_data;
+	struct odin_listener *lsnr;
 	unsigned long size = vma->vm_end - vma->vm_start;
+	int ret;
 
-	if (!priv->listener || !priv->listener->sb.vaddr)
+	lsnr = odin_get_priv_listener(priv);
+	if (!lsnr)
 		return -EINVAL;
 
-	if (size > priv->listener->sb.size)
+	if (!lsnr->sb.vaddr || size > lsnr->sb.size) {
+		kref_put(&lsnr->refcount, odin_listener_release);
 		return -EINVAL;
+	}
 
-	return dma_mmap_coherent(priv->ctx->dev, vma,
-				 priv->listener->sb.vaddr,
-				 priv->listener->sb.paddr, size);
+	ret = dma_mmap_coherent(priv->ctx->dev, vma,
+				lsnr->sb.vaddr, lsnr->sb.paddr, size);
+	kref_put(&lsnr->refcount, odin_listener_release);
+	return ret;
 }
 
 static int odin_qseecom_open(struct inode *inode, struct file *filp)
@@ -703,8 +765,7 @@ static int odin_qseecom_release(struct inode *inode, struct file *filp)
 {
 	struct odin_file_priv *priv = filp->private_data;
 
-	if (priv->listener)
-		odin_unregister_listener_obj(priv->ctx, priv->listener);
+	odin_detach_priv_listener(priv);
 	kfree(priv);
 	return 0;
 }
