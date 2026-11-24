@@ -214,7 +214,13 @@ static int aw8697_wait_standby(struct aw8697_data *haptics)
 
 static int aw8697_stop(struct aw8697_data *haptics)
 {
+	unsigned int state;
 	int err;
+
+	err = regmap_read(haptics->regmap, AW8697_REG_GLB_STATE, &state);
+	if (!err && FIELD_GET(AW8697_GLB_STATE_MASK, state) ==
+	    AW8697_GLB_STATE_STANDBY)
+		return aw8697_enter_standby(haptics);
 
 	err = regmap_update_bits(haptics->regmap, AW8697_REG_GO,
 				 AW8697_GO_ENABLE, 0);
@@ -313,7 +319,7 @@ static int aw8697_haptics_play(struct input_dev *dev, void *data,
 		return 0;
 
 	WRITE_ONCE(haptics->level, level);
-	schedule_work(&haptics->play_work);
+	queue_work(system_highpri_wq, &haptics->play_work);
 
 	return 0;
 }
@@ -445,9 +451,13 @@ static int aw8697_haptic_init(struct aw8697_data *haptics)
 	if (err)
 		return err;
 
+	/*
+	 * Disable hardware VBAT gain compensation: REG_VBAT is not actively
+	 * sampled here (leaving uninitialized low ADC values that clip/overdrive
+	 * the waveform), and the 8.0 V boost converter already regulates drive.
+	 */
 	err = regmap_update_bits(haptics->regmap, AW8697_REG_ADCTEST,
-				 AW8697_ADCTEST_VBAT_HW_COMP,
-				 AW8697_ADCTEST_VBAT_HW_COMP);
+				 AW8697_ADCTEST_VBAT_HW_COMP, 0);
 	if (err)
 		return err;
 
@@ -675,7 +685,26 @@ static int aw8697_suspend(struct device *dev)
 	return err;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(aw8697_pm_ops, aw8697_suspend, NULL);
+static int aw8697_resume(struct device *dev)
+{
+	struct aw8697_data *haptics = dev_get_drvdata(dev);
+	unsigned int base_h = 0;
+	int err;
+
+	mutex_lock(&haptics->lock);
+	err = regmap_read(haptics->regmap, AW8697_REG_BASE_ADDRH, &base_h);
+	if (!err && base_h != (AW8697_RAM_BASE_ADDR >> 8)) {
+		dev_info(dev, "SRAM config lost across suspend, reinitializing\n");
+		err = aw8697_haptic_init(haptics);
+		if (!err)
+			err = aw8697_ram_init(haptics);
+	}
+	mutex_unlock(&haptics->lock);
+
+	return err;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(aw8697_pm_ops, aw8697_suspend, aw8697_resume);
 
 static const struct of_device_id aw8697_of_id[] = {
 	{ .compatible = "awinic,aw8697" },
