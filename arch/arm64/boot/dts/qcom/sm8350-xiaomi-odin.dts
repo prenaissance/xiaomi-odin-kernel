@@ -382,6 +382,13 @@
 	/* The arch_timer label is required by Gunyah/ABL to apply HypOverlay */
 	arch_timer: timer { };
 
+	fingerprint-goodix {
+		compatible = "goodix,fingerprint";
+		l11c-vdd-supply = <&pm8350c_l11>;
+		reset-gpios = <&tlmm 39 GPIO_ACTIVE_LOW>;
+		irq-gpios = <&tlmm 38 GPIO_ACTIVE_HIGH>;
+	};
+
 	touch_avdd_vreg: touch-avdd-regulator {
 		compatible = "regulator-fixed";
 		regulator-name = "touch_avdd";

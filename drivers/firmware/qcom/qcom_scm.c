@@ -2220,6 +2220,39 @@ int qcom_scm_qseecom_app_send(u32 app_id, void *req, size_t req_size,
 }
 EXPORT_SYMBOL_GPL(qcom_scm_qseecom_app_send);
 
+int qcom_scm_qseecom_raw_call(u32 owner, u32 svc, u32 cmd, u32 arginfo,
+			      const u64 args[10], u64 *result,
+			      u64 *resp_type, u64 *data)
+{
+	struct qcom_scm_qseecom_resp res = {};
+	struct qcom_scm_desc desc = {
+		.owner = owner,
+		.svc = svc,
+		.cmd = cmd,
+		.arginfo = arginfo,
+	};
+	int status;
+
+	if (!__scm)
+		return -EPROBE_DEFER;
+
+	memcpy(desc.args, args, sizeof(desc.args));
+
+	mutex_lock(&qcom_scm_qseecom_call_lock);
+	status = __qcom_scm_qseecom_call(&desc, &res);
+	mutex_unlock(&qcom_scm_qseecom_call_lock);
+
+	if (result)
+		*result = res.result;
+	if (resp_type)
+		*resp_type = res.resp_type;
+	if (data)
+		*data = res.data;
+
+	return status;
+}
+EXPORT_SYMBOL_GPL(qcom_scm_qseecom_raw_call);
+
 /*
  * We do not yet support re-entrant calls via the qseecom interface. To prevent
  + any potential issues with this, only allow validated machines for now.

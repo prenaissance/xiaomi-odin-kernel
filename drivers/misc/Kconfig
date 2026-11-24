@@ -597,6 +597,27 @@ source "drivers/misc/cardreader/Kconfig"
 source "drivers/misc/uacce/Kconfig"
 source "drivers/misc/pvpanic/Kconfig"
 source "drivers/misc/mchp_pci1xxxx/Kconfig"
+config GOODIX_FOD
+	tristate "Goodix optical under-display fingerprint platform driver"
+	depends on OF && GPIOLIB && REGULATOR && NET
+	help
+	  Platform driver providing reset GPIO, IRQ, regulator, and /dev/goodix_fp
+	  character device and netlink notification support for Goodix optical
+	  in-display fingerprint sensors whose SPI bus is owned by TrustZone.
+
+	  If unsure, say N.
+
+config QCOM_ODIN_QSEECOM
+	tristate "Minimal Qualcomm QSEECOM experimental bridge"
+	depends on QCOM_SCM && QCOM_QSEECOM && QCOM_TZMEM
+	help
+	  Minimal QSEECOM character device (/dev/odin_qseecom) for loading and
+	  invoking Qualcomm TrustZone QSEECom Trusted Applications and servicing
+	  re-entrant QSEE listener callbacks over 32-bit CMA SHM bridges on
+	  SM8350 platforms.
+
+	  If unsure, say N.
+
 source "drivers/misc/keba/Kconfig"
 source "drivers/misc/amd-sbi/Kconfig"
 source "drivers/misc/rp1/Kconfig"

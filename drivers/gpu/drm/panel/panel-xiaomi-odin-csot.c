@@ -9,8 +9,10 @@
 #include <linux/devm-helpers.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/regulator/consumer.h>
+#include <linux/sysfs.h>
 #include <linux/workqueue.h>
 
 #include <drm/display/drm_dsc.h>
@@ -34,7 +36,9 @@ struct xiaomi_odin_csot {
 	struct gpio_desc *reset_gpio;
 	struct regulator_bulk_data *supplies;
 	struct delayed_work bl_work;
+	struct mutex lhbm_lock;	/* protects lhbm_mode and DSI writes */
 	atomic_t bl_sync_rem;
+	unsigned int lhbm_mode;
 	bool prepared;
 };
 
@@ -361,7 +365,10 @@ static int xiaomi_odin_csot_unprepare(struct drm_panel *panel)
 
 	atomic_set(&ctx->bl_sync_rem, 0);
 	cancel_delayed_work_sync(&ctx->bl_work);
+	mutex_lock(&ctx->lhbm_lock);
 	ctx->prepared = false;
+	ctx->lhbm_mode = 0;
+	mutex_unlock(&ctx->lhbm_lock);
 
 	ret = xiaomi_odin_csot_off(ctx);
 	if (ret < 0)
@@ -481,13 +488,132 @@ static const struct drm_panel_funcs xiaomi_odin_csot_panel_funcs = {
 	.get_modes = xiaomi_odin_csot_get_modes,
 };
 
+static int xiaomi_odin_csot_set_lhbm(struct xiaomi_odin_csot *ctx,
+				     unsigned int mode)
+{
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	u16 brightness;
+
+	guard(mutex)(&ctx->lhbm_lock);
+
+	if (!ctx->prepared)
+		return -EAGAIN;
+
+	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+
+	if (mode == 0) {
+		u8 bl_cmd[3];
+
+		brightness = backlight_get_brightness(ctx->panel.backlight);
+		bl_cmd[0] = MIPI_DCS_SET_DISPLAY_BRIGHTNESS;
+		bl_cmd[1] = brightness >> 8;
+		bl_cmd[2] = brightness & 0xff;
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx,
+					     MIPI_DCS_WRITE_CONTROL_DISPLAY,
+					     0x20);
+		mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, bl_cmd,
+						sizeof(bl_cmd));
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x87, 0x00, 0x00, 0x04);
+		if (!dsi_ctx.accum_err)
+			ctx->lhbm_mode = 0;
+		return dsi_ctx.accum_err;
+	}
+
+	nt37701_switch_page(&dsi_ctx, 0x02);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x08);
+	switch (mode) {
+	case 1:
+		/* White 1000-nit FOD circle */
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd0,
+					     0x0b, 0x07, 0x09, 0x7b,
+					     0x0c, 0x1d);
+		break;
+	case 2:
+		/* White 110-nit low-brightness FOD circle */
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd0,
+					     0x07, 0x62, 0x06, 0x74,
+					     0x07, 0xf7);
+		break;
+	case 3:
+		/* Green 500-nit FOD circle */
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd0,
+					     0x00, 0x00, 0x09, 0x89,
+					     0x00, 0x00);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	nt37701_switch_page(&dsi_ctx, 0x00);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x1f);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb2, 0x00, 0x44);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY,
+				     0x20);
+	/* FOD optical sensor center coordinates: (539, 1802) */
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x88, 0x02, 0x1b, 0x07, 0x0a);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x87, 0x0f, 0xff);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x11);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x87, 0x0f, 0xff);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
+				     0x0f, 0xff);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x02);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x87, 0x05);
+	mipi_dsi_msleep(&dsi_ctx, 33);
+
+	if (!dsi_ctx.accum_err)
+		ctx->lhbm_mode = mode;
+
+	return dsi_ctx.accum_err;
+}
+
+static ssize_t lhbm_mode_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct xiaomi_odin_csot *ctx = dev_get_drvdata(dev);
+	unsigned int mode;
+
+	mutex_lock(&ctx->lhbm_lock);
+	mode = ctx->lhbm_mode;
+	mutex_unlock(&ctx->lhbm_lock);
+
+	return sysfs_emit(buf, "%u\n", mode);
+}
+
+static ssize_t lhbm_mode_store(struct device *dev,
+			       struct device_attribute *attr,
+			       const char *buf, size_t count)
+{
+	struct xiaomi_odin_csot *ctx = dev_get_drvdata(dev);
+	unsigned int mode;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &mode);
+	if (ret)
+		return ret;
+
+	ret = xiaomi_odin_csot_set_lhbm(ctx, mode);
+	if (ret)
+		return ret;
+
+	return count;
+}
+static DEVICE_ATTR_RW(lhbm_mode);
+
+static struct attribute *xiaomi_odin_csot_attrs[] = {
+	&dev_attr_lhbm_mode.attr,
+	NULL
+};
+ATTRIBUTE_GROUPS(xiaomi_odin_csot);
+
 static int xiaomi_odin_csot_bl_update_status(struct backlight_device *bl)
 {
 	struct xiaomi_odin_csot *ctx = bl_get_data(bl);
 	struct mipi_dsi_device *dsi = ctx->dsi;
 	u16 brightness = backlight_get_brightness(bl);
 
-	if (!ctx->prepared)
+	guard(mutex)(&ctx->lhbm_lock);
+
+	if (!ctx->prepared || ctx->lhbm_mode)
 		return 0;
 
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
@@ -553,6 +679,7 @@ static int xiaomi_odin_csot_probe(struct mipi_dsi_device *dsi)
 				     "Failed to get reset GPIO\n");
 
 	ctx->dsi = dsi;
+	mutex_init(&ctx->lhbm_lock);
 	mipi_dsi_set_drvdata(dsi, ctx);
 
 	dsi->lanes = 4;
@@ -629,6 +756,7 @@ static struct mipi_dsi_driver xiaomi_odin_csot_driver = {
 	.driver = {
 		.name = "panel-xiaomi-odin-csot",
 		.of_match_table = xiaomi_odin_csot_of_match,
+		.dev_groups = xiaomi_odin_csot_groups,
 	},
 };
 module_mipi_dsi_driver(xiaomi_odin_csot_driver);
