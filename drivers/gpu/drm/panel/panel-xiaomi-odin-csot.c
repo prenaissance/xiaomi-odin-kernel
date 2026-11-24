@@ -488,6 +488,84 @@ static const struct drm_panel_funcs xiaomi_odin_csot_panel_funcs = {
 	.get_modes = xiaomi_odin_csot_get_modes,
 };
 
+struct xiaomi_odin_lhbm_alpha_knot {
+	u16 bl;
+	u16 aa;
+	u16 cup;
+};
+
+/*
+ * NT37701 Local HBM gamma-compensated dimming alpha curves for the active
+ * area (AA) and under-display camera area (CUP) outside the 1000-nit FOD
+ * circle while DCS 0x51 is held at 0x0fff.
+ */
+static const struct xiaomi_odin_lhbm_alpha_knot xiaomi_odin_lhbm_alpha[] = {
+	{    0, 0x000, 0x000 }, {    1, 0x07a, 0x0a3 },
+	{    2, 0x09a, 0x0c8 }, {    4, 0x0ca, 0x100 },
+	{    8, 0x10e, 0x151 }, {   16, 0x16d, 0x1c6 },
+	{   24, 0x1b4, 0x21e }, {   32, 0x1f0, 0x268 },
+	{   48, 0x253, 0x2e2 }, {   64, 0x2a6, 0x348 },
+	{   96, 0x32e, 0x3f1 }, {  128, 0x3a0, 0x480 },
+	{  192, 0x45b, 0x568 }, {  256, 0x4f5, 0x629 },
+	{  384, 0x5f6, 0x767 }, {  512, 0x6c9, 0x870 },
+	{  768, 0x829, 0xa23 }, { 1024, 0x94c, 0xb90 },
+	{ 1280, 0xa4a, 0xccc }, { 1536, 0xb2e, 0xde7 },
+	{ 1792, 0xbfe, 0xeea }, { 2047, 0xcbd, 0xfd8 },
+	{ 2560, 0xda5, 0xfd8 }, { 3072, 0xe7b, 0xfd8 },
+	{ 3584, 0xf43, 0xfd8 }, { 4095, 0xfff, 0xfd8 },
+};
+
+static void xiaomi_odin_csot_lhbm_alpha(u16 bl, u16 *aa, u16 *cup)
+{
+	const struct xiaomi_odin_lhbm_alpha_knot *k = xiaomi_odin_lhbm_alpha;
+	size_t i;
+
+	if (bl >= 4095) {
+		*aa = k[ARRAY_SIZE(xiaomi_odin_lhbm_alpha) - 1].aa;
+		*cup = k[ARRAY_SIZE(xiaomi_odin_lhbm_alpha) - 1].cup;
+		return;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(xiaomi_odin_lhbm_alpha) - 1; i++) {
+		if (bl <= k[i + 1].bl) {
+			u32 span = k[i + 1].bl - k[i].bl;
+			u32 off = bl - k[i].bl;
+
+			*aa = k[i].aa +
+			      ((u32)(k[i + 1].aa - k[i].aa) * off + span / 2) /
+			      span;
+			*cup = k[i].cup +
+			       ((u32)(k[i + 1].cup - k[i].cup) * off + span / 2) /
+			       span;
+			return;
+		}
+	}
+
+	*aa = k[0].aa;
+	*cup = k[0].cup;
+}
+
+static void
+xiaomi_odin_csot_write_lhbm_alpha(struct mipi_dsi_multi_context *dsi_ctx,
+				  u16 brightness)
+{
+	u16 aa_alpha, cup_alpha;
+	u8 aa_cmd[3], cup_cmd[3];
+
+	xiaomi_odin_csot_lhbm_alpha(brightness, &aa_alpha, &cup_alpha);
+
+	aa_cmd[0] = 0x87;
+	aa_cmd[1] = (aa_alpha >> 8) & 0x0f;
+	aa_cmd[2] = aa_alpha & 0xff;
+	cup_cmd[0] = 0x87;
+	cup_cmd[1] = (cup_alpha >> 8) & 0x0f;
+	cup_cmd[2] = cup_alpha & 0xff;
+
+	mipi_dsi_dcs_write_buffer_multi(dsi_ctx, aa_cmd, sizeof(aa_cmd));
+	mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0x6f, 0x11);
+	mipi_dsi_dcs_write_buffer_multi(dsi_ctx, cup_cmd, sizeof(cup_cmd));
+}
+
 static int xiaomi_odin_csot_set_lhbm(struct xiaomi_odin_csot *ctx,
 				     unsigned int mode)
 {
@@ -500,11 +578,11 @@ static int xiaomi_odin_csot_set_lhbm(struct xiaomi_odin_csot *ctx,
 		return -EAGAIN;
 
 	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+	brightness = backlight_get_brightness(ctx->panel.backlight);
 
 	if (mode == 0) {
 		u8 bl_cmd[3];
 
-		brightness = backlight_get_brightness(ctx->panel.backlight);
 		bl_cmd[0] = MIPI_DCS_SET_DISPLAY_BRIGHTNESS;
 		bl_cmd[1] = brightness >> 8;
 		bl_cmd[2] = brightness & 0xff;
@@ -551,9 +629,7 @@ static int xiaomi_odin_csot_set_lhbm(struct xiaomi_odin_csot *ctx,
 				     0x20);
 	/* FOD optical sensor center coordinates: (539, 1802) */
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x88, 0x02, 0x1b, 0x07, 0x0a);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x87, 0x0f, 0xff);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x11);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x87, 0x0f, 0xff);
+	xiaomi_odin_csot_write_lhbm_alpha(&dsi_ctx, brightness);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
 				     0x0f, 0xff);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x02);
@@ -613,10 +689,19 @@ static int xiaomi_odin_csot_bl_update_status(struct backlight_device *bl)
 
 	guard(mutex)(&ctx->lhbm_lock);
 
-	if (!ctx->prepared || ctx->lhbm_mode)
+	if (!ctx->prepared)
 		return 0;
 
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+
+	if (ctx->lhbm_mode) {
+		struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
+
+		xiaomi_odin_csot_write_lhbm_alpha(&dsi_ctx, brightness);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x02);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x87, 0x05);
+		return dsi_ctx.accum_err;
+	}
 
 	return mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
 }
