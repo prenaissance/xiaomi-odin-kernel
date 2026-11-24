@@ -3,6 +3,7 @@
  * STMicroelectronics FingerTip S (FTS5) SPI touchscreen driver
  */
 
+#include <linux/bitops.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/gpio/consumer.h>
@@ -232,6 +233,7 @@ static irqreturn_t stmfts_spi_irq(int irq, void *data)
 	struct stmfts_spi_ts *ts = data;
 	u8 fifo[STMFTS_SPI_FIFO_MAX_BYTES];
 	unsigned int remaining, total, i;
+	unsigned long slot_dirty = 0;
 	bool report_sync = false;
 	bool need_recovery = false;
 	int ret;
@@ -267,17 +269,45 @@ static irqreturn_t stmfts_spi_irq(int irq, void *data)
 		if (evt_id == STMFTS_SPI_EVT_NOEVENT || evt_id == 0xff)
 			break;
 
-		switch (evt_id) {
+		if (evt_id == STMFTS_SPI_EVT_ERROR) {
+			if (evt[1] == STMFTS_SPI_ERR_ESD ||
+			    evt[1] == STMFTS_SPI_ERR_WATCHDOG)
+				need_recovery = true;
+			continue;
+		}
+
+		/*
+		 * Pointer events pack the upper 2 bits of touch_major into
+		 * evt[0] bits [3:2], so mask them out when matching the ID.
+		 */
+		switch (evt_id & 0xf3) {
 		case STMFTS_SPI_EVT_ENTER_POINT:
 		case STMFTS_SPI_EVT_MOTION_POINT:
 			touch_type = evt[1] & 0x0f;
 			slot = (evt[1] & 0xf0) >> 4;
 			if (slot >= STMFTS_SPI_MAX_SLOTS)
 				break;
+
+			if (test_bit(slot, &slot_dirty)) {
+				input_mt_report_pointer_emulation(ts->input, false);
+				input_sync(ts->input);
+				slot_dirty = 0;
+				report_sync = false;
+			}
+
+			/* Reject palm contacts rather than reporting them as finger taps */
+			if (touch_type == STMFTS_SPI_TOUCH_PALM) {
+				input_mt_slot(ts->input, slot);
+				input_mt_report_slot_state(ts->input,
+							   MT_TOOL_FINGER, false);
+				__set_bit(slot, &slot_dirty);
+				report_sync = true;
+				break;
+			}
+
 			if (touch_type != STMFTS_SPI_TOUCH_FINGER &&
 			    touch_type != STMFTS_SPI_TOUCH_GLOVE &&
-			    touch_type != STMFTS_SPI_TOUCH_STYLUS &&
-			    touch_type != STMFTS_SPI_TOUCH_PALM)
+			    touch_type != STMFTS_SPI_TOUCH_STYLUS)
 				break;
 
 			if (ts->super_res) {
@@ -299,6 +329,7 @@ static irqreturn_t stmfts_spi_irq(int irq, void *data)
 			touchscreen_report_pos(ts->input, &ts->prop, x, y, true);
 			input_report_abs(ts->input, ABS_MT_TOUCH_MAJOR, major);
 			input_report_abs(ts->input, ABS_MT_TOUCH_MINOR, minor);
+			__set_bit(slot, &slot_dirty);
 			report_sync = true;
 			break;
 
@@ -309,15 +340,17 @@ static irqreturn_t stmfts_spi_irq(int irq, void *data)
 			if (slot >= STMFTS_SPI_MAX_SLOTS)
 				break;
 
+			if (test_bit(slot, &slot_dirty)) {
+				input_mt_report_pointer_emulation(ts->input, false);
+				input_sync(ts->input);
+				slot_dirty = 0;
+				report_sync = false;
+			}
+
 			input_mt_slot(ts->input, slot);
 			input_mt_report_slot_state(ts->input, MT_TOOL_FINGER, false);
+			__set_bit(slot, &slot_dirty);
 			report_sync = true;
-			break;
-
-		case STMFTS_SPI_EVT_ERROR:
-			if (evt[1] == STMFTS_SPI_ERR_ESD ||
-			    evt[1] == STMFTS_SPI_ERR_WATCHDOG)
-				need_recovery = true;
 			break;
 
 		default:
@@ -356,7 +389,8 @@ static int stmfts_spi_power_on(struct stmfts_spi_ts *ts)
 		return ret;
 	}
 
-	usleep_range(5000, 7000);
+	/* Allow analog 3.3 V rail and touch matrix baseline to settle cleanly */
+	usleep_range(20000, 25000);
 	return 0;
 }
 
