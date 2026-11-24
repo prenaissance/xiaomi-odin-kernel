@@ -1031,6 +1031,24 @@ config VIDEO_DW9825
 	  DW9825A provides 12-bit closed-loop Hall-effect lens position
 	  control for camera autofocus.
 
+config VIDEO_BU24618
+	tristate "Rohm BU24618 optical image stabilization support"
+	select V4L2_CCI_I2C
+	help
+	  This is a driver for the Rohm BU24618 camera optical image
+	  stabilization (OIS) controller, controlled via I2C serial interface.
+	  It loads RAM firmware on power-up and drives closed-loop optical
+	  lens stabilization using its integrated gyroscope interface.
+
+config VIDEO_LC898128
+	tristate "ON Semi LC898128 optical image stabilization support"
+	select V4L2_CCI_I2C
+	help
+	  This is a driver for the ON Semiconductor LC898128 camera optical
+	  image stabilization (OIS) controller, controlled via I2C serial
+	  interface using its pre-programmed on-chip flash firmware.
+	  It provides runtime power management and servo/OIS mode control.
+
 endif
 
 menu "Flash devices"

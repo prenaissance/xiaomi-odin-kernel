@@ -927,6 +927,7 @@
 		vddd-supply = <&pm8008i_l2>;
 
 		lens-focus = <&actuator_wide>;
+		lens-ois = <&ois_wide>;
 		flash-leds = <&pm8350c_flash_led>;
 
 		orientation = <1>;
@@ -940,6 +941,16 @@
 				remote-endpoint = <&csiphy1_ep>;
 			};
 		};
+	};
+
+	ois_wide: ois@3e {
+		compatible = "rohm,bu24618";
+		reg = <0x3e>;
+
+		vdd-supply = <&pm8008i_l3>;
+		vaf-supply = <&pm8008i_l4>;
+		vio-supply = <&pm8008i_l6>;
+		firmware-name = "qcom/sm8350/xiaomi/odin/odin_wide_bu24618_ois";
 	};
 };
 
@@ -1007,6 +1018,7 @@
 		vddd-supply = <&vreg_cam_ultra_tele_dvdd>;
 
 		lens-focus = <&actuator_tele>;
+		lens-ois = <&ois_tele>;
 
 		orientation = <1>;
 		rotation = <270>;
@@ -1018,6 +1030,14 @@
 				remote-endpoint = <&csiphy4_ep>;
 			};
 		};
+	};
+
+	ois_tele: ois@24 {
+		compatible = "onnn,lc898128";
+		reg = <0x24>;
+
+		vdd-supply = <&pm8008i_l7>;
+		vio-supply = <&pm8008i_l6>;
 	};
 };
 
@@ -1159,8 +1179,8 @@
 
 			pm8008i_l3: ldo3 {
 				regulator-name = "pm8008i_l3";
-				regulator-min-microvolt = <2696000>;
-				regulator-max-microvolt = <3000000>;
+				regulator-min-microvolt = <2800000>;
+				regulator-max-microvolt = <2800000>;
 			};
 
 			pm8008i_l4: ldo4 {

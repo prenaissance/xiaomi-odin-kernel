@@ -2468,6 +2468,9 @@ struct hi847 {
 
 	/* True if the device has been identified */
 	bool identified;
+
+	struct device_node *ois_node;
+	struct i2c_client *ois_client;
 };
 
 static u64 to_pixel_rate(struct hi847 *hi847, u32 f_index)
@@ -2972,6 +2975,36 @@ static void hi847_stop_streaming(struct hi847 *hi847)
 			HI847_REG_MODE_SELECT);
 }
 
+static void hi847_ois_get(struct hi847 *hi847)
+{
+	struct i2c_client *ois;
+
+	if (!hi847->ois_node || hi847->ois_client)
+		return;
+
+	ois = of_find_i2c_device_by_node(hi847->ois_node);
+	if (!ois)
+		return;
+
+	if (pm_runtime_resume_and_get(&ois->dev) < 0) {
+		put_device(&ois->dev);
+		return;
+	}
+
+	hi847->ois_client = ois;
+}
+
+static void hi847_ois_put(struct hi847 *hi847)
+{
+	if (!hi847->ois_client)
+		return;
+
+	pm_runtime_mark_last_busy(&hi847->ois_client->dev);
+	pm_runtime_put_autosuspend(&hi847->ois_client->dev);
+	put_device(&hi847->ois_client->dev);
+	hi847->ois_client = NULL;
+}
+
 static int hi847_set_stream(struct v4l2_subdev *sd, int enable)
 {
 	struct hi847 *hi847 = to_hi847(sd);
@@ -2989,8 +3022,11 @@ static int hi847_set_stream(struct v4l2_subdev *sd, int enable)
 		if (ret) {
 			hi847_stop_streaming(hi847);
 			pm_runtime_put_sync(hi847->dev);
+		} else {
+			hi847_ois_get(hi847);
 		}
 	} else {
+		hi847_ois_put(hi847);
 		hi847_stop_streaming(hi847);
 		pm_runtime_mark_last_busy(hi847->dev);
 		pm_runtime_put_autosuspend(hi847->dev);
@@ -3287,6 +3323,9 @@ static void hi847_remove(struct i2c_client *client)
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct hi847 *hi847 = to_hi847(sd);
 
+	hi847_ois_put(hi847);
+	of_node_put(hi847->ois_node);
+
 	v4l2_async_unregister_subdev(sd);
 	media_entity_cleanup(&sd->entity);
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
@@ -3323,11 +3362,14 @@ static int hi847_probe(struct i2c_client *client)
 	if (ret)
 		return ret;
 
+	hi847->ois_node = of_parse_phandle(hi847->dev->of_node, "lens-ois", 0);
+
 	full_power = acpi_dev_state_d0(hi847->dev);
 	if (full_power) {
 		ret = hi847_power_on(hi847->dev);
 		if (ret) {
 			dev_err(hi847->dev, "failed to power on: %d\n", ret);
+			of_node_put(hi847->ois_node);
 			return ret;
 		}
 
@@ -3386,6 +3428,7 @@ probe_error_v4l2_ctrl_handler_free:
 probe_error_power_off:
 	if (full_power)
 		hi847_power_off(hi847->dev);
+	of_node_put(hi847->ois_node);
 
 	return ret;
 }

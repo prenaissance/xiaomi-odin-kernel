@@ -10,6 +10,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 #include <linux/units.h>
@@ -123,6 +124,9 @@ struct s5khmx {
 	struct v4l2_ctrl *hflip;
 
 	const struct s5khmx_mode *mode;
+
+	struct device_node *ois_node;
+	struct i2c_client *ois_client;
 };
 
 static const struct cci_reg_sequence s5khmx_sw_reset_regs[] = {
@@ -931,6 +935,35 @@ static int s5khmx_init_controls(struct s5khmx *s5khmx)
 	return 0;
 }
 
+static void s5khmx_ois_get(struct s5khmx *s5khmx)
+{
+	struct i2c_client *ois;
+
+	if (!s5khmx->ois_node || s5khmx->ois_client)
+		return;
+
+	ois = of_find_i2c_device_by_node(s5khmx->ois_node);
+	if (!ois)
+		return;
+
+	if (pm_runtime_resume_and_get(&ois->dev) < 0) {
+		put_device(&ois->dev);
+		return;
+	}
+
+	s5khmx->ois_client = ois;
+}
+
+static void s5khmx_ois_put(struct s5khmx *s5khmx)
+{
+	if (!s5khmx->ois_client)
+		return;
+
+	pm_runtime_put_sync_suspend(&s5khmx->ois_client->dev);
+	put_device(&s5khmx->ois_client->dev);
+	s5khmx->ois_client = NULL;
+}
+
 static int s5khmx_enable_streams(struct v4l2_subdev *sd,
 				 struct v4l2_subdev_state *state, u32 pad,
 				 u64 streams_mask)
@@ -970,6 +1003,8 @@ static int s5khmx_enable_streams(struct v4l2_subdev *sd,
 	if (ret)
 		goto error;
 
+	s5khmx_ois_get(s5khmx);
+
 	return 0;
 
 error:
@@ -986,6 +1021,8 @@ static int s5khmx_disable_streams(struct v4l2_subdev *sd,
 {
 	struct s5khmx *s5khmx = to_s5khmx(sd);
 	int ret;
+
+	s5khmx_ois_put(s5khmx);
 
 	ret = cci_write(s5khmx->regmap, S5KHMX_REG_CTRL_MODE, 0, NULL);
 	if (ret)
@@ -1329,9 +1366,13 @@ static int s5khmx_probe(struct i2c_client *client)
 		return dev_err_probe(s5khmx->dev, ret,
 				     "failed to get supply regulators\n");
 
+	s5khmx->ois_node = of_parse_phandle(s5khmx->dev->of_node, "lens-ois", 0);
+
 	ret = s5khmx_power_on(s5khmx->dev);
-	if (ret)
+	if (ret) {
+		of_node_put(s5khmx->ois_node);
 		return ret;
+	}
 
 	ret = s5khmx_identify_sensor(s5khmx);
 	if (ret) {
@@ -1396,6 +1437,7 @@ v4l2_ctrl_handler_free:
 
 power_off:
 	s5khmx_power_off(s5khmx->dev);
+	of_node_put(s5khmx->ois_node);
 
 	return ret;
 }
@@ -1404,6 +1446,9 @@ static void s5khmx_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct s5khmx *s5khmx = to_s5khmx(sd);
+
+	s5khmx_ois_put(s5khmx);
+	of_node_put(s5khmx->ois_node);
 
 	v4l2_async_unregister_subdev(sd);
 	v4l2_subdev_cleanup(sd);
